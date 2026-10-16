@@ -20,7 +20,8 @@ export async function budgetedLumaCompletion(openai:OpenAI,db:ReturnType<typeof 
  const claim=saved.data as{state?:string;id?:string;response?:ChatCompletion}|null
  if(saved.error||!claim)throw new Error('Could not confirm the saved model request.')
  if(claim.state==='received'&&claim.response){await fresh();return claim.response}
- if(claim.state!=='claimed'||!claim.id)throw new Error(claim.state==='limited'?'The property’s daily AI allowance is reached. Please contact the team directly.':'This model request needs review before it can be repeated.')
+ if(claim.state==='limited')throw Object.assign(new Error('Chat is temporarily unavailable. Please contact the community team directly.'),{code:'luma_allowance_exhausted'})
+ if(claim.state!=='claimed'||!claim.id)throw new Error('This model request needs review before it can be repeated.')
  let response:ChatCompletion
  try {response=await openai.chat.completions.create(params)}catch(error){
   const issue=error instanceof Error&&/timeout|timed out/i.test(error.name+' '+error.message)?'provider_timeout':'provider_error'

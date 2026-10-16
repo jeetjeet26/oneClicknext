@@ -173,6 +173,23 @@ describe('LumaLeasing chat route', () => {
     await expect(response.json()).resolves.toEqual({ error: 'API key required' })
   })
 
+  it('returns a clear allowance hold instead of an internal server error', async () => {
+    validateBodyMock.mockReturnValue({ success: true, data: { messages: [{ role: 'user', content: 'What homes are available?' }], sessionId: null, leadInfo: null } })
+    const query = {
+      select: () => query,
+      eq: () => query,
+      single: async () => ({ data: { property_id: 'property-1', widget_name: 'Luma', properties: { name: 'Acacia', property_type: 'master_planned' } }, error: null }),
+    }
+    createServiceClientMock.mockReturnValue({ from: () => query })
+    openAiChatCreateMock.mockRejectedValue(Object.assign(new Error('Chat is temporarily unavailable. Please contact the community team directly.'), { code: 'luma_allowance_exhausted' }))
+    const { POST } = await import('./route')
+    const request = new Request('http://localhost/api/lumaleasing/chat', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'test-key' }, body: JSON.stringify({ messages: [{ role: 'user', content: 'What homes are available?' }] }) }) as NextRequest
+    const response = await POST(request)
+    expect(response.status).toBe(429)
+    await expect(response.json()).resolves.toMatchObject({ code: 'ai_allowance_exhausted', error: expect.stringContaining('community team') })
+    expect(upsertLeadByContactMock).not.toHaveBeenCalled()
+  })
+
   it('returns waitingForHuman when an existing conversation is in human mode', async () => {
     validateBodyMock.mockReturnValue({
       success: true,

@@ -850,6 +850,10 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
     }, { headers: responseHeaders });
 
   } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'luma_allowance_exhausted') {
+      ctx.logSuccess(429, { reason: 'ai_allowance_exhausted' });
+      return NextResponse.json({ error: error.message, code: 'ai_allowance_exhausted' }, { status: 429, headers: responseHeaders });
+    }
     ctx.logError(500, error, { operation: 'lumaleasing_chat' })
     return serverError(error, responseHeaders);
   }
