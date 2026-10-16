@@ -10,8 +10,8 @@ import {boundedJson,brainFailure,privateHeaders,requireConsoleOrigin} from '@/ut
 export const runtime='nodejs'
 export const dynamic='force-dynamic'
 const command=z.discriminatedUnion('operation',[
-  z.object({operation:z.literal('prepare'),propertyId:z.uuid(),requestId:z.uuid(),fileName:z.string().max(255),size:z.number().int().positive(),byteHash:z.string().regex(/^[a-f0-9]{64}$/),title:z.string().trim().min(1).max(300),reason:z.string().trim().min(3).max(2000)}).strict(),
-  z.object({operation:z.literal('finalize'),propertyId:z.uuid(),fileId:z.uuid()}).strict(),
+  z.object({operation:z.literal('prepare'),propertyId:z.guid(),requestId:z.guid(),fileName:z.string().max(255),size:z.number().int().positive(),byteHash:z.string().regex(/^[a-f0-9]{64}$/),title:z.string().trim().min(1).max(300),reason:z.string().trim().min(3).max(2000)}).strict(),
+  z.object({operation:z.literal('finalize'),propertyId:z.guid(),fileId:z.guid()}).strict(),
 ])
 export async function GET(){return Response.json({recipe:'community-file-v1',formats:intakeFormats},{headers:privateHeaders})}
 export async function POST(request:Request) {

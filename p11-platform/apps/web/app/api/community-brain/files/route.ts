@@ -6,13 +6,13 @@ import {brainFailure,privateHeaders} from '@/utils/community-brain/http'
 import {createServiceClient} from '@/utils/supabase/admin'
 export const dynamic='force-dynamic'
 export async function GET(request:Request){try{
- const actor=await brainActor(),p=new URL(request.url).searchParams,propertyId=z.uuid().parse(p.get('propertyId')),fileId=z.uuid().parse(p.get('fileId')),scope=await resolveCommunityScope(actor,propertyId,'download')
+ const actor=await brainActor(),p=new URL(request.url).searchParams,propertyId=z.guid().parse(p.get('propertyId')),fileId=z.guid().parse(p.get('fileId')),scope=await resolveCommunityScope(actor,propertyId,'download')
  const detail=await brainRpc<{sourceCurrent:boolean;file:{property_id:string;state:string;storage_path:string;input:{byteHash:string;fileName:string;mimeType:string;size:number}}}>('brain_file_detail',{p_scope_id:scope.id,p_file_id:fileId})
  if(detail.file.property_id!==propertyId||detail.file.state!=='stored'||!detail.sourceCurrent)throw new BrainError('Original file is unavailable.',404)
  let path=detail.file.storage_path,hash=detail.file.input.byteHash,size=detail.file.input.size,mime=detail.file.input.mimeType
  if(p.get('renditionId')){
   // The generated schema is refreshed from the qualified migration before release.
-  const query=createServiceClient().from('community_file_renditions').select('*').eq('id',z.uuid().parse(p.get('renditionId'))).eq('file_id',fileId).eq('property_id',propertyId)
+  const query=createServiceClient().from('community_file_renditions').select('*').eq('id',z.guid().parse(p.get('renditionId'))).eq('file_id',fileId).eq('property_id',propertyId)
   const {data,error}=await query.single();if(error||!data||data.original_hash!==hash)throw new BrainError('The selected page is unavailable.',404)
   path=data.storage_path;hash=data.content_hash;size=data.byte_size;mime=data.mime_type
  }

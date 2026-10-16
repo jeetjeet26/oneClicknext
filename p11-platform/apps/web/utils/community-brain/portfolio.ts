@@ -11,7 +11,7 @@ import {reportingRows} from '@/utils/analytics/report-quality'
 import {buildBiReport} from '@/utils/analytics/report-data'
 export type CommunityOption={id:string;name:string;capabilities:string[]}
 export type PortfolioGroup={propertyId:string;name:string;state:'ready'|'unavailable';data:Record<string,unknown>;evidenceKey:string}
-export const portfolioAnswer=z.object({summary:z.string().max(4000),insights:z.array(z.object({observation:z.string().max(1600),communityIds:z.array(z.uuid()).min(1).max(25),evidenceKeys:z.array(z.string()).min(1).max(25)}).strict()).max(15),recommendations:z.array(z.string().max(1000)).max(8)}).strict()
+export const portfolioAnswer=z.object({summary:z.string().max(4000),insights:z.array(z.object({observation:z.string().max(1600),communityIds:z.array(z.guid()).min(1).max(25),evidenceKeys:z.array(z.string()).min(1).max(25)}).strict()).max(15),recommendations:z.array(z.string().max(1000)).max(8)}).strict()
 export function validatePortfolioAnswer(value:unknown,groups:PortfolioGroup[]) {
   const answer=portfolioAnswer.parse(value),eligible=groups.filter(g=>g.state==='ready')
   for(const item of answer.insights) {

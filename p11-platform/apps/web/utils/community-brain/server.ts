@@ -27,7 +27,9 @@ export async function resolvePortfolioScope(actorId:string,propertyIds:string[])
   return resolveScope(actorId,propertyIds,'portfolio')
 }
 async function resolveScope(actorId:string,propertyIds:string[],purpose:BrainPurpose):Promise<CommunityScope> {
-  const scope=scopeSchema.parse(await brainRpc('brain_resolve_scope',{p_actor_id:actorId,p_property_ids:propertyIds,p_purpose:purpose}))
+  const parsed=scopeSchema.safeParse(await brainRpc('brain_resolve_scope',{p_actor_id:actorId,p_property_ids:propertyIds,p_purpose:purpose}))
+  if(!parsed.success)throw new BrainError('Community access could not be confirmed. Refresh and try again.')
+  const scope=parsed.data
   if(scope.actor_id!==actorId||scope.purpose!==purpose||[...new Set(propertyIds)].sort().join(',')!==scope.property_ids.slice().sort().join(','))throw new BrainError('The saved scope does not match this request.',403)
   Object.freeze(scope.property_ids)
   return Object.freeze(scope)

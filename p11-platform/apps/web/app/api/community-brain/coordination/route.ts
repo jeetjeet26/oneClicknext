@@ -7,13 +7,13 @@ import {readServiceDeliverable} from '@/utils/community-brain/generation'
 export const dynamic='force-dynamic'
 const text=z.string().trim().min(1).max(2000),record=z.record(z.string(),z.unknown())
 const requestSchema=z.discriminatedUnion('operation',[
- z.object({operation:z.literal('initiative'),propertyId:z.uuid(),requestId:z.uuid(),input:z.object({name:text,offering:text,objective:text,successMetric:text,baseline:record,start:z.iso.date(),end:z.iso.date(),stopConditions:z.array(text).min(1).max(20)}).strict()}).strict(),
- z.object({operation:z.literal('package'),propertyId:z.uuid(),requestId:z.uuid(),initiativeId:z.uuid(),input:z.object({previousId:z.uuid().nullable(),state:z.enum(['draft','approved','withdrawn']),aiBudgetUsd:z.number().min(0).max(100000),brief:z.object({goal:text,channels:z.array(text).min(1).max(20),deliverables:z.array(text).min(1).max(50),requirements:text,reviewCriteria:text}).strict()}).strict()}).strict(),
- z.object({operation:z.literal('deliverable'),propertyId:z.uuid(),requestId:z.uuid(),packageId:z.uuid(),purpose:z.enum(['site','social','brand','chat']),query:z.string().max(4000).default(''),assetIds:z.array(z.uuid()).max(100).default([]),requirements:record,outputContract:record,reviewCriteria:record}).strict(),
+ z.object({operation:z.literal('initiative'),propertyId:z.guid(),requestId:z.guid(),input:z.object({name:text,offering:text,objective:text,successMetric:text,baseline:record,start:z.iso.date(),end:z.iso.date(),stopConditions:z.array(text).min(1).max(20)}).strict()}).strict(),
+ z.object({operation:z.literal('package'),propertyId:z.guid(),requestId:z.guid(),initiativeId:z.guid(),input:z.object({previousId:z.guid().nullable(),state:z.enum(['draft','approved','withdrawn']),aiBudgetUsd:z.number().min(0).max(100000),brief:z.object({goal:text,channels:z.array(text).min(1).max(20),deliverables:z.array(text).min(1).max(50),requirements:text,reviewCriteria:text}).strict()}).strict()}).strict(),
+ z.object({operation:z.literal('deliverable'),propertyId:z.guid(),requestId:z.guid(),packageId:z.guid(),purpose:z.enum(['site','social','brand','chat']),query:z.string().max(4000).default(''),assetIds:z.array(z.guid()).max(100).default([]),requirements:record,outputContract:record,reviewCriteria:record}).strict(),
 ])
 export async function GET(request:Request){try{
- const p=new URL(request.url).searchParams,actor=await brainActor(),propertyId=z.uuid().parse(p.get('propertyId'))
- if(p.get('deliverableId'))return Response.json(await readServiceDeliverable(actor,propertyId,z.enum(['site','social','brand','chat']).parse(p.get('purpose')),z.uuid().parse(p.get('deliverableId'))),{headers:privateHeaders})
+ const p=new URL(request.url).searchParams,actor=await brainActor(),propertyId=z.guid().parse(p.get('propertyId'))
+ if(p.get('deliverableId'))return Response.json(await readServiceDeliverable(actor,propertyId,z.enum(['site','social','brand','chat']).parse(p.get('purpose')),z.guid().parse(p.get('deliverableId'))),{headers:privateHeaders})
  const scope=await resolveCommunityScope(actor,propertyId,'research')
  return Response.json(await brainRpc('brain_read_coordination',{p_scope_id:scope.id}),{headers:privateHeaders})
 }catch(error){return brainFailure(error)}}

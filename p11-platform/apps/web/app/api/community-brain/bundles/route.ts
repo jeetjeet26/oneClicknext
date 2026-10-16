@@ -7,7 +7,7 @@ import {downloadCheckedAsset,assertAssetCurrent,type SavedAsset} from '@/utils/c
 import {boundedJson,brainFailure,privateHeaders,requireConsoleOrigin} from '@/utils/community-brain/http'
 export const runtime='nodejs'
 export const maxDuration=300
-const schema=z.object({sessionId:z.uuid(),propertyIds:z.array(z.uuid()).min(1).max(500),assets:z.array(z.object({propertyId:z.uuid(),assetId:z.uuid()}).strict()).min(1).max(50)}).strict()
+const schema=z.object({sessionId:z.guid(),propertyIds:z.array(z.guid()).min(1).max(500),assets:z.array(z.object({propertyId:z.guid(),assetId:z.guid()}).strict()).min(1).max(50)}).strict()
 export async function POST(request:Request){try{
  requireConsoleOrigin(request)
  const input=schema.parse(await boundedJson(request)),actor=await brainActor(),scope=await resolvePortfolioScope(actor,input.propertyIds)

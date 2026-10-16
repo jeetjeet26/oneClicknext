@@ -5,7 +5,7 @@ import {downloadCheckedAsset} from '@/utils/community-brain/download'
 import {brainFailure,privateHeaders} from '@/utils/community-brain/http'
 export const runtime='nodejs'
 export const dynamic='force-dynamic'
-const query=z.object({propertyId:z.uuid(),assetId:z.uuid(),download:z.enum(['true','false']).default('false')}).strict()
+const query=z.object({propertyId:z.guid(),assetId:z.guid(),download:z.enum(['true','false']).default('false')}).strict()
 export async function GET(request:Request) {
   try {
     const actor=await brainActor(),parsed=query.safeParse(Object.fromEntries(new URL(request.url).searchParams))

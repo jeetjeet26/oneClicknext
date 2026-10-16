@@ -5,13 +5,13 @@ import {boundedJson,brainFailure,privateHeaders,requireConsoleOrigin} from '@/ut
 import {createServiceClient} from '@/utils/supabase/admin'
 import {readMaterials} from '@/utils/knowledge/material-store'
 export const dynamic='force-dynamic'
-const source=z.object({operation:z.literal('source'),propertyId:z.uuid(),versionId:z.uuid(),review:z.object({audience:z.enum(['public','internal']),origin:z.enum(['original','generated','derived']),allowedUses:z.array(z.enum(['fact','style','research'])).min(1),purposes:z.array(z.enum(['chat','site','social','brand','research','portfolio'])).min(1),reviewAfter:z.iso.datetime(),expiresAt:z.iso.datetime().nullable(),reason:z.string().min(3).max(2000)}).strict()}).strict()
-const asset=z.object({operation:z.literal('asset'),propertyId:z.uuid(),requestId:z.uuid(),asset:z.object({fileId:z.uuid(),originalHash:z.string().regex(/^[a-f0-9]{64}$/),renditionId:z.uuid().nullable(),role:z.enum(['floorplan','primary_logo','secondary_logo','font','gallery','hero','interior','exterior','amenity','brand_mark']),name:z.string().trim().min(1).max(255),description:z.string().max(2000),isGenerated:z.boolean(),rights:z.enum(['owned','licensed']),license:z.string().max(2000),unitId:z.uuid().nullable(),unitHash:z.string().regex(/^[a-f0-9]{64}$/).nullable(),reason:z.string().min(3).max(2000),confirmed:z.literal(true)}).strict()}).strict()
+const source=z.object({operation:z.literal('source'),propertyId:z.guid(),versionId:z.guid(),review:z.object({audience:z.enum(['public','internal']),origin:z.enum(['original','generated','derived']),allowedUses:z.array(z.enum(['fact','style','research'])).min(1),purposes:z.array(z.enum(['chat','site','social','brand','research','portfolio'])).min(1),reviewAfter:z.iso.datetime(),expiresAt:z.iso.datetime().nullable(),reason:z.string().min(3).max(2000)}).strict()}).strict()
+const asset=z.object({operation:z.literal('asset'),propertyId:z.guid(),requestId:z.guid(),asset:z.object({fileId:z.guid(),originalHash:z.string().regex(/^[a-f0-9]{64}$/),renditionId:z.guid().nullable(),role:z.enum(['floorplan','primary_logo','secondary_logo','font','gallery','hero','interior','exterior','amenity','brand_mark']),name:z.string().trim().min(1).max(255),description:z.string().max(2000),isGenerated:z.boolean(),rights:z.enum(['owned','licensed']),license:z.string().max(2000),unitId:z.guid().nullable(),unitHash:z.string().regex(/^[a-f0-9]{64}$/).nullable(),reason:z.string().min(3).max(2000),confirmed:z.literal(true)}).strict()}).strict()
 export async function GET(request:Request){try{
- const actor=await brainActor(),p=new URL(request.url).searchParams,propertyId=z.uuid().parse(p.get('propertyId')),scope=await resolveCommunityScope(actor,propertyId,'research')
- if(p.get('fileId'))return Response.json(await brainRpc('brain_file_detail',{p_scope_id:scope.id,p_file_id:z.uuid().parse(p.get('fileId'))}),{headers:privateHeaders})
+ const actor=await brainActor(),p=new URL(request.url).searchParams,propertyId=z.guid().parse(p.get('propertyId')),scope=await resolveCommunityScope(actor,propertyId,'research')
+ if(p.get('fileId'))return Response.json(await brainRpc('brain_file_detail',{p_scope_id:scope.id,p_file_id:z.guid().parse(p.get('fileId'))}),{headers:privateHeaders})
  if(p.get('materialId')){
-  const material=await readMaterials(actor,propertyId,{kind:'version',materialId:z.uuid().parse(p.get('materialId')),versionId:z.uuid().parse(p.get('versionId'))})
+  const material=await readMaterials(actor,propertyId,{kind:'version',materialId:z.guid().parse(p.get('materialId')),versionId:z.guid().parse(p.get('versionId'))})
   await requireCurrentScope(scope,propertyId)
   return Response.json(material,{headers:privateHeaders})
  }
