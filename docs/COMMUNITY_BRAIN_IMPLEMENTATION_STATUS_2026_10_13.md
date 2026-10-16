@@ -1,5 +1,7 @@
 # Community Brain implementation and qualification
 
+**Current rollout note — October 16, 2026:** The original local-only record below is historical. The Acacia chat/file pilot has since been deployed and its three reviewed homesites approved. Read the [current production evidence and remaining rollout boundary](community-brain-release/2026-10-15-acacia/README.md#october-16-owner-approval-and-broader-sanity-pass) before using the older deployment statements below. Portfolio, generated feedback, recurring connected-source schedules and non-chat generation are not yet activated in production; CB00–CB17 is not fully accepted.
+
 October 13, 2026 (America/Los_Angeles). **Local implementation is substantial and tested; the entire CB00–CB17 plan is not complete or production accepted.** This record distinguishes implemented code, synthetic qualification, remaining engineering, and live dependencies. No live schema migration, application deployment, paid model generation, marketing publication or advertising spend has been performed.
 
 The candidate builds on `b07cdc170ff40b5d85baf0164a77b302777f062f` and the user's existing working tree. Thirteen of the fourteen pre-existing dirty files are byte-identical to the starting fingerprints. The remaining file, `utils/intelligence/portfolio.ts`, was extended to reuse the reporting logic and enforce explicit selected-community access. Existing reporting/client-portal changes were preserved. No commits, resets or stashes were made.

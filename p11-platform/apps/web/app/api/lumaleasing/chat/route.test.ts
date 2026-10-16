@@ -842,6 +842,10 @@ describe('LumaLeasing chat route', () => {
     expect(systemPrompt).toContain('PROPERTY LINKS')
     expect(systemPrompt).toContain(acacia.chatbot.configuredLinks.floorPlans)
     expect(systemPrompt).toContain(acacia.chatbot.configuredLinks.availability)
+    expect(systemPrompt).toContain('general browsing links, not evidence')
+    expect(systemPrompt).toContain('If the exact requested drawing or mirrored variant is not verified')
+    expect(systemPrompt).toContain('Never substitute another plan, a master drawing, or a generated image')
+    expect(systemPrompt).not.toContain('browse all the floor plans here')
   })
 
   it('omits the property links section when no links are configured', async () => {

@@ -107,3 +107,35 @@ Verification on October 16:
 - The recent production error scan showed only the existing outbound-workflow pause response, not a Community Brain file-access error. Outbound delivery was not resumed.
 
 Remaining holds are deliberate review states: three legacy homesite records still combine historical commercial claims with plan variants, and asset reuse still requires rights and exact drawing association review. Old Plan 4/4X public PDF URLs found in search no longer downloaded successfully; cached search text was not promoted as a newly retained, verified drawing. Older withdrawn object-shaped adoption records remain retained; the current native fact fields are the approved, editable records. Review dates remain November 14, 2026.
+
+## October 16 owner approval and broader sanity pass
+
+The owner subsequently authorized approval of the three held homesite records. All three now have approved native versions and immutable approval decisions. Their stable plan fields were checked against the exact homesite entries in a newly retained official availability-page capture. Commercial fields remain unknown under the existing owner instruction. Homesite 14's two full bathrooms plus two powder rooms are recorded explicitly; its ambiguous numeric bathroom total is withheld. The master Plan 2 drawing was not associated as the exact reversed Homesite 5 drawing. Approval does not imply asset licensing or an available exact drawing.
+
+The old unit-release function removes obsolete generated pricing documents. Before invoking that workflow, the existing unapproved pricing copy was reclassified as historical reference, with its complete previous record retained in a new immutable receipt. The three native releases therefore matched zero documents for removal. Assertions in the atomic transaction verified unchanged document identities/text, unchanged legacy source records, the three approvals and null commercial values. No original, record, deployment or worktree was deleted. Thirteen original files/captures are now retained privately.
+
+All three unit changes produced real `canonical_refreshed` worker receipts. No Community Brain jobs remained queued or running after completion. The earlier SVG extraction failure is still an explicit parser hold, not a stalled approval. Original SVG bytes remain retained.
+
+The sanity pass identified two additional chat corrections:
+
+- The link instructions encouraged claiming the general website contained all plans. They now distinguish general browsing from a verified exact drawing and require a sales referral when the requested variant is unconfirmed.
+- Adding the three plans brought the complete serialized public context to approximately 15,479 of 16,000 characters. Model input now omits a bounded set of record bookkeeping fields and redundant source hashes. Fact text, source evidence identifiers/URLs, review dates, exact plan identity, null versus zero, commercial limitations and variant caveats remain intact. The saved freshness/audit context retains the entire original read. Oversized actual facts are still withheld rather than truncated.
+
+Fresh verification in this pass:
+
+- Full web regression before the two small corrections: **5,554 passed, 44 skipped**. The changed chat/context tests subsequently pass **25 checks**; type checking passes.
+- All five Community Brain database suites pass against the existing isolated local database. Coverage includes same-organization and foreign-community denials, selected portfolio scope, revocation, provider ancestry, source withdrawal, generated-style feedback, exact assets, native projection and chat cutover.
+- Backend checks: **9 passed, 4 host capability skips**. The separate isolated Linux worker run passes **all 10 parser tests**, including actual scanned multipage PDF OCR, raster/transparent images, Office text/cells, fonts, MP4/WebM and native network denial. This does not certify every customer format through every downstream consumer.
+- Live console: 13 originals load; the imported-floorplan screen shows **3 total, 3 eligible, zero private drafts and zero retired**. Unknown prices and availability remain visibly unknown.
+- Live chat after approval: Plan 4 size/den, Plan 4X bathroom configuration, commercial uncertainty, missing exact drawings, amenity uncertainty, exact request replay and rejection of a different community's widget session. No test lead was created. One initial drawing-response assertion was too dependent on a particular uncertainty word; direct inspection confirmed the master/reverse distinction and withheld exact drawing, and the general-link wording issue was separately corrected.
+- Live integrity: no mismatched document/evidence owners or asset-binding owners; original storage remains private; the worker has one current community grant. Direct anonymous database reads were denied. Security advisors report no new critical exposure; the deny-by-default service tables intentionally have no browser policies. Existing notices about the vector extension's schema, the guarded `brain_can` RLS helper, the older organization helper and password protection are not evidence that community data is public. See the [Supabase database-linter guidance](https://supabase.com/docs/guides/database/database-linter) and [password-protection guidance](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection).
+
+### Actual rollout boundary
+
+The core Acacia pilot is live; **the full marketing-automation roadmap is not production accepted**. Acacia alone has chat context, ingestion and authorized private-file delivery enabled. The other eight community settings remain off. Portfolio queries, creative feedback and site/social/brand consumers remain off for every community. There are no enabled Community Brain connected-source schedules or current channel-qualification receipts.
+
+Six approved source references exist for Acacia. Five adoption references currently supply lexical evidence and canonical facts; one native source has a validated embedding. This is not full semantic coverage or a measured semantic-recall evaluation. The older unreviewed vectors have not been relabeled as trusted evidence.
+
+Before expanding activation, finish exact asset/rights review, native embedding coverage and labelled retrieval evaluation; qualify selected source schedules and provider reconnection/recovery; exercise portfolio synthesis with an explicitly selected reviewed community set; and run each generator's brief-to-output-to-approval-to-style-memory journey. Real campaign account/window coverage, verified costs, channel delivery/recovery, concurrent load and complete object/rendition recovery remain separate acceptance work. Existing local tests demonstrate these boundaries, not completion of those live journeys. No marketing publication, spending or broader permission grant was made during this pass.
+
+The web correction's production deployment receipt is recorded below after staged verification and promotion.

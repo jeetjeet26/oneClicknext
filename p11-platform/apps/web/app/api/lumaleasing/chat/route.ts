@@ -680,9 +680,10 @@ ${config.floor_plans_url || config.availability_url ? `
 PROPERTY LINKS:
 ${config.floor_plans_url ? `- Floor plans page: ${config.floor_plans_url}` : ''}
 ${config.availability_url ? `- Availability page: ${config.availability_url}` : ''}
-- When the visitor asks about floor plans, layouts, or a specific plan, include the floor plans page link in your reply so they can explore the plans.
-- When the visitor asks about availability, available homes, homesites, current pricing, or move-in dates, include the availability page link in your reply.
-- Share links as plain URLs in a natural sentence, for example "You can browse all the floor plans here: <link>". Never use markdown link syntax.
+- These are general browsing links, not evidence that a specific drawing, home, price or offer is currently available there. Current approved knowledge takes precedence over the linked page.
+- When useful, share the floor plans page as a general reference. If the exact requested drawing or mirrored variant is not verified in the knowledge base, say you cannot confirm it and refer the visitor to the sales or leasing team. Never substitute another plan, a master drawing, or a generated image for that exact drawing.
+- When sharing the availability page, preserve any unconfirmed availability, pricing or move-in status. Do not imply the page resolves that uncertainty.
+- Share links as plain URLs in a natural sentence, for example "You can also browse the community's floor plans page: <link>". Never say it contains all plans or the requested drawing unless the knowledge base verifies that. Never use markdown link syntax.
 - Only share these exact links. Never invent or guess other URLs.
 ` : ''}
 
