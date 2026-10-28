@@ -1,3 +1,4 @@
+import {resolveDestinationSsh} from './destination-credentials'
 import {requireGenerationCurrent} from '@/utils/community-brain/generation'
 import 'server-only'
 import { createClient } from '@supabase/supabase-js'
@@ -24,7 +25,14 @@ export async function deliveryView(propertyId:string){
  return {targets:(targets.data??[]).filter(t=>t.credential_ref&&t.site_url&&t.provider_application_id&&t.provider_server_id).map(t=>({id:t.id,websiteId:t.website_id,type:t.target_type,url:t.site_url})),releases:(history.data??[]).map(r=>({id:r.id,jobId:r.job_id,kind:r.kind,state:r.state,targetId:r.target_id,url:r.target_snapshot.url,previewId:r.preview_id,approvalId:r.approval_id,createdAt:r.created_at,qualityVerified:!!r.receipt.quality,message:r.receipt.message}))}
 }
 async function target(id:string,propertyId:string,orgId:string){const {data:t,error}=await createServiceClient().from('siteforge_wordpress_targets').select('*').eq('id',id).eq('property_id',propertyId).eq('org_id',orgId).eq('provider','cloudways').eq('is_active',true).eq('status','ready').single();if(error||!t?.credential_ref||!t.site_url||!t.provider_application_id||!t.provider_server_id)throw new PackageError('Choose a connected Cloudways WordPress destination.',409);const u=new URL(t.site_url);if(u.protocol!=='https:'||u.username||u.password||u.search||u.hash)throw new PackageError('A secure Cloudways destination is required.',409);return {id:t.id,websiteId:t.website_id,type:t.target_type,url:t.site_url,credentialRef:t.credential_ref,serverId:t.provider_server_id,applicationId:t.provider_application_id} as TargetSnapshot}
-async function credential(t:TargetSnapshot){const c=await getWordPressCredentialReference(t.credentialRef);if(c.provider!=='cloudways'||!c.ssh?.applicationRoot||!c.ssh.sftpApplicationRoot||c.providerMetadata?.applicationId!==t.applicationId||c.providerMetadata?.serverId!==t.serverId||c.url.replace(/\/$/,'')!==t.url.replace(/\/$/,''))throw new PackageError('The saved WordPress credentials do not match this destination.',409);return c.ssh}
+async function credential(t:TargetSnapshot){
+ const c=await getWordPressCredentialReference(t.credentialRef)
+ return resolveDestinationSsh(t,c,process.env.SITEFORGE_CLOUDWAYS_SSH_PRIVATE_KEY,async()=>{
+  const config=getCloudwaysProviderCredentials()
+  if(!config)throw new PackageError('Reconnect Cloudways to verify this WordPress destination.',409)
+  return new CloudwaysProviderClient(config).getApplication({serverId:t.serverId,applicationId:t.applicationId})
+ })
+}
 async function release(id:string,propertyId:string){const r=await db().from('siteforge_package_releases').select('*').eq('id',id).eq('property_id',propertyId).single();if(r.error||!r.data)throw new PackageError('Saved release not found.',404);return r.data}
 export function themeArchive(bytes:Uint8Array,slug:string){if(!/^p11-astra-[a-f0-9]{24}$/.test(slug))throw new PackageError('Invalid theme identity.',422);const input=unpackPackage(bytes);const theme:Record<string,Uint8Array>={};for(const [name,b]of Object.entries(input))if(name.startsWith('website/')&&!name.endsWith('/'))theme[slug+'/'+name.slice(8)]=b;if(!theme[slug+'/style.css']||!theme[slug+'/index.php']||!theme[slug+'/functions.php'])throw new PackageError('An installable WordPress package is required.',422);return zipSync(theme,{level:1})}
 async function packageBytes(job:Awaited<ReturnType<typeof getPackageJob>>){if(job.state!=='ready'||job.target!=='wordpress'||!job.package_path||!job.package_hash)throw new PackageError('Choose a ready WordPress package.',409);const storageClient=packageDb();const r=await storageClient.storage.from('siteforge-packages').download(job.package_path);if(r.error||!r.data)throw new PackageError('The retained package could not be read.');const b=new Uint8Array(await r.data.arrayBuffer());if(sha256(b)!==job.package_hash)throw new PackageError('Package integrity check failed.',409);return b}
