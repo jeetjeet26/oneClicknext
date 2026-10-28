@@ -3,10 +3,20 @@ import { unzipSync,strFromU8 } from 'fflate'
 const mocks=vi.hoisted(()=>({download:vi.fn(),fetch:vi.fn()}))
 vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({storage:{from:()=>({download:mocks.download})}})}))
 vi.mock('@/utils/services/safe-public-fetch',()=>({safePublicFetch:mocks.fetch}))
-import { assembleSourceArchive,sha256,type PackageSource } from './source'
+import { assembleSourceArchive,inventoryHasExpired,resolveLegacyLogoAssetIds,sha256,type PackageSource } from './source'
 const bytes=new Uint8Array([137,80,78,71])
 function fixture(){return {version:1,property:{id:'property',name:'Demo'},brand:null,direction:null,floorplans:[{id:'plan-a',unit_type:'One bedroom',floor_plan_image_asset_id:'asset-a',floor_plan_image_url:'https://obsolete.invalid/old.png'}],assets:[{id:'asset-a',property_id:'property',asset_role:'floorplan',name:'Approved diagram',storage_bucket:'assets',storage_path:'property/diagram.png',file_url:'https://current.example/diagram.png',content_hash:sha256(bytes)}],warnings:[]} as unknown as PackageSource}
 describe('saved property and floorplan handoff',()=>{
+  it('includes approved legacy logos by exact URL and appropriate asset role',()=>{
+    expect(resolveLegacyLogoAssetIds([{url:'https://assets.example/logo.png'}],[{id:'logo',file_url:'https://assets.example/logo.png',asset_role:'primary_logo'}])).toEqual(['logo'])
+  })
+  it('never substitutes URL matches for an explicit logo ID',()=>{
+    expect(resolveLegacyLogoAssetIds([{assetId:'canonical',url:'https://assets.example/old.png'}],[])).toEqual([])
+  })
+  it('rejects absent, ambiguous or incorrectly classified legacy logos',()=>{
+    const logo={url:'https://assets.example/logo.png'},asset={id:'logo',file_url:logo.url,asset_role:'primary_logo'}
+    for(const assets of [[],[asset,{...asset,id:'duplicate'}],[{...asset,asset_role:'hero'}]])expect(()=>resolveLegacyLogoAssetIds([logo],assets)).toThrow('exact approved media-library match')
+  })
   beforeEach(()=>{vi.clearAllMocks();mocks.download.mockResolvedValue({data:new Blob([bytes],{type:'image/png'}),error:null})})
   it('packages the actual approved bytes and keeps every floorplan association',async()=>{
     const source=fixture();source.floorplans.push({...source.floorplans[0],id:'plan-b'})
@@ -47,5 +57,18 @@ describe('saved property and floorplan handoff',()=>{
   it('does not claim a complete handoff if approved media cannot be downloaded',async()=>{
     mocks.download.mockResolvedValue({data:null,error:new Error('unavailable')})
     await expect(assembleSourceArchive(fixture(),{id:'build',sourceHash:'hash',target:'standalone'})).rejects.toThrow('could not be included')
+  })
+})
+
+
+describe('inventory expiration',()=>{
+  const now=Date.parse('2026-10-28T12:00:00Z')
+  it.each([null,undefined,''])('does not expire a missing date (%s)',value=>{
+    expect(inventoryHasExpired(value,now)).toBe(false)
+  })
+  it('omits prices only at or after an explicit expiration',()=>{
+    expect(inventoryHasExpired('2026-10-28T11:59:59Z',now)).toBe(true)
+    expect(inventoryHasExpired('2026-10-28T12:00:00Z',now)).toBe(true)
+    expect(inventoryHasExpired('2026-10-28T12:00:01Z',now)).toBe(false)
   })
 })

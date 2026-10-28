@@ -1,4 +1,5 @@
 import 'server-only'
+import {createHash} from 'node:crypto'
 import type OpenAI from 'openai'
 import {BrainError,type CommunityScope} from './contracts'
 import {brainRpc,resolveCommunityScope} from './server'
@@ -11,7 +12,20 @@ export async function packageProviderTask(job:{id:string;actor_id:string;propert
  if(!job.brain_context_id)throw new BrainError('This legacy build needs a current source manifest.',409)
  return {scope:await resolveCommunityScope(job.actor_id,job.property_id,'site'),contextId:job.brain_context_id} satisfies ProviderTask
 }
-export const providerProject=()=>{const id=process.env.OPENAI_PROJECT_ID;if(!id||!/^proj_[A-Za-z0-9_-]+$/.test(id))throw new BrainError('The provider project identity must be configured before community generation.',503);return id}
+export function providerProject(){
+ // Preserve identities already recorded by installations with an explicit project.
+ const id=process.env.OPENAI_PROJECT_ID?.trim()
+ if(id){
+  if(!/^proj_[A-Za-z0-9_-]+$/.test(id))throw new BrainError('The configured OpenAI project identity is invalid.',503)
+  return id
+ }
+ const key=process.env.OPENAI_API_KEY
+ if(!key?.trim())throw new BrainError('Configure the OpenAI API key before community generation.',503)
+ // This is a local ownership namespace, not an OpenAI project ID or API header.
+ // Never retain the credential itself. A different key must not silently inherit
+ // access to provider objects or cleanup work recorded under another credential.
+ return `api-key-sha256:${createHash('sha256').update(key).digest('hex')}`
+}
 export async function recordProviderObject(task:ProviderTask,kind:ProviderObject['object_kind'],objectId:string,parents:string[]=[],retentionSeconds=86400){
  return brainRpc<ProviderObject>('brain_provider_record',{p_scope_id:task.scope.id,p_input:{provider:'openai',project:providerProject(),kind,objectId,parents,contextId:task.contextId??null,sessionId:task.sessionId??null,policyRevision:'community-provider-v1',expiresAt:new Date(Date.now()+retentionSeconds*1000).toISOString()}})
 }

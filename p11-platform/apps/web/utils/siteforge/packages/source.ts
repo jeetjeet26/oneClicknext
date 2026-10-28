@@ -9,7 +9,24 @@ import { componentGuides } from '@/utils/intelligence/components'
 import {selectPackageDirection, type WebsiteDirection} from './direction'
 import { resolveFloorplanBindings } from '@/utils/community-brain/floorplans'
 
+// An omitted expiration is not evidence that saved inventory has expired.
+export function inventoryHasExpired(expiresAt:string|null|undefined,now=Date.now()):boolean {
+  return !!expiresAt && Date.parse(expiresAt)<=now
+}
+
 export const sha256 = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex')
+// Legacy approved brands reference exact URLs instead of asset IDs. Resolve only
+// against the already filtered, approved property assets, never remote guesses.
+export function resolveLegacyLogoAssetIds(logos:readonly {assetId?:string|null;url?:string|null}[],assets:readonly {id:string;file_url:string|null;asset_role:string|null}[]) {
+  const ids:string[]=[]
+  for(const logo of logos){
+    if(logo.assetId||!logo.url)continue
+    const matches=assets.filter(asset=>asset.file_url===logo.url&&['primary_logo','secondary_logo','monochrome_logo','brand_mark','favicon'].includes(asset.asset_role??''))
+    if(matches.length!==1)throw new PackageError('An approved brand logo needs an exact approved media-library match. Review the saved logo before generating.',422)
+    ids.push(matches[0].id)
+  }
+  return ids
+}
 export function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
   if (value && typeof value === 'object') return `{${Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>`${JSON.stringify(k)}:${stableJson(v)}`).join(',')}}`
@@ -44,7 +61,7 @@ export async function loadPackageSource(propertyId: string,actorId?:string,selec
   if(assets.data?.some(a=>a.expires_at && Date.parse(a.expires_at)<Date.now())) warnings.push('Some approved media have expired usage dates. Review image rights before publication.')
   let floorplans=(units.data??[]).map(unit=>{
     // Snapshot prices are never represented as a live feed. Expired inventory must not advertise stale prices.
-    if(!unit.expires_at || Date.parse(unit.expires_at)<=Date.now()) {
+    if(inventoryHasExpired(unit.expires_at)) {
       warnings.push(`Pricing and availability for ${unit.unit_type} have expired and will be omitted.`)
       return {...unit,rent_min:null,rent_max:null,deposit:null,available_count:null,move_in_specials:null}
     }
@@ -53,6 +70,7 @@ export async function loadPackageSource(propertyId: string,actorId?:string,selec
   if((assets.data?.length??0)>1000)throw new PackageError('Select an asset collection containing at most 1,000 approved files.',422)
   const approvedBrand=brand.data?normalizeBrandAssetRow(brand.data):null
   const required=new Set([...(selectedAssetIds??[]),...floorplans.flatMap(u=>u.floor_plan_image_asset_id?[u.floor_plan_image_asset_id]:[]),...(approvedBrand?.logos.variants.flatMap(l=>l.assetId?[l.assetId]:[])??[]),...(approvedBrand?.typography.roles.flatMap(f=>f.assetId?[f.assetId]:[])??[])])
+  for(const id of resolveLegacyLogoAssetIds(approvedBrand?.logos.variants??[],assets.data??[]))required.add(id)
   const selected=(assets.data??[]).filter(a=>required.has(a.id)||(!selectedAssetIds&&['hero','gallery','exterior','interior','font'].includes(a.asset_role??''))).slice(0,100)
   if([...required].some(id=>!selected.some(a=>a.id===id)))throw new PackageError('A required drawing, logo, or selected file is not eligible. Review it before generation.',422)
   const context=await getCommunityContext(scope,{propertyId,query:'community facts amenities policies brand floorplans',assetIds:selected.map(a=>a.id)})

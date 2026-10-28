@@ -2,6 +2,7 @@
 
 import { useCallback,useEffect,useRef,useState } from 'react'
 import Link from 'next/link'
+import { PackageProgress } from './PackageProgress'
 import { PackageDelivery } from './PackageDelivery'
 import { Download,Loader2,Sparkles } from 'lucide-react'
 import type { PackageSourceSummary,PackageSummary } from '@/utils/siteforge/packages/contracts'
@@ -36,7 +37,7 @@ export function SiteForgePackages({propertyId}:{propertyId:string}) {
       try {
         const response=await fetch('/api/siteforge/packages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'refresh',propertyId,id:runningId})})
         if(!response.ok)throw new Error('Progress is unavailable.')
-        if(!cancelled) await load()
+        if(!cancelled) {await load();setError('')}
       } catch {if(!cancelled)setError('Progress could not be refreshed. Your build is saved; use Refresh to check again.')}
       if(!cancelled)timer=setTimeout(poll,10000)
     }
@@ -78,7 +79,7 @@ export function SiteForgePackages({propertyId}:{propertyId:string}) {
         {!view.configured?<p className="text-sm text-amber-800">Astra needs to be connected on this server before you can generate a website.</p>:null}
       </form>
       <div className="mt-8 border-t pt-6"><h3 className="font-semibold text-gray-900">Website packages</h3><p className="mt-1 text-sm text-gray-600">Each version retains the information used to build it. Review the website and editing instructions before publishing.</p>
-        {!view.jobs.length?<p className="mt-5 text-sm text-gray-500">Your first website package will appear here.</p>:<ul className="mt-4 divide-y">{view.jobs.map(job=><li key={job.id} className="py-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-medium text-gray-900">{job.target==='wordpress'?'WordPress':'Standalone'} website · {new Date(job.created_at).toLocaleDateString()}</p><p role={active(job)?'status':undefined} className="mt-1 text-sm text-gray-600">{labels[job.state]}</p></div><div className="flex gap-3">{job.state==='ready'?<><a href={`/api/siteforge/packages?propertyId=${propertyId}&downloadId=${job.id}`} download className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm"><Download className="h-4 w-4"/>Download package</a><button type="button" disabled={busy||Boolean(running)} className="rounded-lg border px-3 py-2 text-sm" onClick={()=>{setParent(job);setTarget(job.target);setNotes('');document.getElementById('package-notes')?.focus()}}>Create revision</button></>:null}</div></div><p className="mt-2 line-clamp-2 text-sm text-gray-500">{job.instructions}</p>{job.source_hash!==view.source.hash?<p className="mt-2 text-xs text-amber-800">Property information has changed since this version was requested.</p>:null}{job.state==='ready'&&job.target==='wordpress'?<PackageDelivery propertyId={propertyId} jobId={job.id}/>:null}{job.error_message?<p className="mt-2 text-sm text-red-800">{job.error_message}</p>:null}</li>)}</ul>}
+        {!view.jobs.length?<p className="mt-5 text-sm text-gray-500">Your first website package will appear here.</p>:<ul className="mt-4 divide-y">{view.jobs.map(job=><li key={job.id} className="py-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-medium text-gray-900">{job.target==='wordpress'?'WordPress':'Standalone'} website · {new Date(job.created_at).toLocaleDateString()}</p><p role={active(job)?'status':undefined} className="mt-1 text-sm text-gray-600">{labels[job.state]}</p></div><div className="flex gap-3">{job.state==='ready'?<><a href={`/api/siteforge/packages?propertyId=${propertyId}&downloadId=${job.id}`} download className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm"><Download className="h-4 w-4"/>Download package</a><button type="button" disabled={busy||Boolean(running)} className="rounded-lg border px-3 py-2 text-sm" onClick={()=>{setParent(job);setTarget(job.target);setNotes('');document.getElementById('package-notes')?.focus()}}>Create revision</button></>:null}</div></div><PackageProgress state={job.state}/><p className="mt-2 line-clamp-2 text-sm text-gray-500">{job.instructions}</p>{job.source_hash!==view.source.hash?<p className="mt-2 text-xs text-amber-800">Property information has changed since this version was requested.</p>:null}{job.state==='ready'&&job.target==='wordpress'?<PackageDelivery propertyId={propertyId} jobId={job.id}/>:null}{job.error_message?<p className="mt-2 text-sm text-red-800">{job.error_message}</p>:null}</li>)}</ul>}
       </div>
     </>:null}
   </section>

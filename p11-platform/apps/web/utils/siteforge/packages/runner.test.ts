@@ -27,8 +27,15 @@ describe('Astra execution recovery',()=>{
   it('uses Astra with an offline container and retains the provider response ID',async()=>{
     mocks.create.mockResolvedValue({id:'response-1'})
     await processPackage('build')
-    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({model:'gpt-6-astra',background:true,reasoning:{effort:'xhigh'},tools:[{type:'shell',environment:{type:'container_auto',file_ids:['file-input'],network_policy:{type:'disabled'}}}]}),expect.anything())
+    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({model:'gpt-6-astra',background:true,max_output_tokens:128000,reasoning:{effort:'xhigh'},tools:[{type:'shell',environment:{type:'container_auto',file_ids:['file-input'],network_policy:{type:'disabled'}}}]}),expect.anything())
     expect(mocks.job).toMatchObject({state:'generating',response_id:'response-1'})
+  })
+  it('reports an output limit without accepting or retrying an incomplete build',async()=>{
+    mocks.job.state='generating';mocks.job.response_id='response-1'
+    mocks.retrieve.mockResolvedValue({id:'response-1',metadata:{siteforge_package_id:'build'},status:'incomplete',incomplete_details:{reason:'max_output_tokens'},usage:{output_tokens:128000}})
+    await processPackage('build');await processPackage('build')
+    expect(mocks.job).toMatchObject({state:'failed',error_message:expect.stringContaining('output limit')})
+    expect(mocks.create).not.toHaveBeenCalled();expect(mocks.content).not.toHaveBeenCalled()
   })
   it('does not retry a paid request when its result was lost',async()=>{
     mocks.create.mockRejectedValue(new Error('Connection reset after submission'))
@@ -68,7 +75,7 @@ describe('Astra execution recovery',()=>{
     mocks.create.mockResolvedValue({id:'repair-response'});
     await processPackage('build');
     expect(mocks.job).toMatchObject({state:'packaging',usage:{siteforgeReview:{attempt:1,status:'repairing',responseId:'repair-response'}}});
-    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({previous_response_id:'original',reasoning:{effort:'xhigh'}}),expect.anything());
+    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({previous_response_id:'original',max_output_tokens:128000,reasoning:{effort:'xhigh'}}),expect.anything());
     mocks.content.mockResolvedValue(new Response(zipSync({'incomplete.txt':strToU8('Still incomplete')})));
     await processPackage('build');expect(mocks.job.state).toBe('failed');expect(mocks.create).toHaveBeenCalledTimes(1);
   })
