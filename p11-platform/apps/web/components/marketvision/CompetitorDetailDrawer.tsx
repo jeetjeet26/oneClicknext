@@ -8,7 +8,6 @@ import {CompetitorProfileContent, profileDate, safeWebsite} from './CompetitorPr
 import {CompetitorUnitsPanel} from './CompetitorUnitsPanel'
 import {CompetitorExtractionPanel} from './CompetitorExtractionPanel'
 import {CompetitorListingPanel} from './CompetitorListingPanel'
-import {CompetitorPriceOverview} from './CompetitorPriceOverview'
 import {CompetitorSourcePanel} from './CompetitorSourcePanel'
 import {
   X,
@@ -209,7 +208,6 @@ export function CompetitorDetailDrawer({
           </div>
         </div>
 
-        {!profile?.scopeNotes.length && <CompetitorPriceOverview units={units} withheld={profile?.withheldUnitIds}/>}
         {profile && <div className="border-b p-5"><CompetitorProfileContent profile={profile}/></div>}
 
         {refreshStatus.message && <p role="alert" className="p-4 text-sm text-red-700">{refreshStatus.message}</p>}
