@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   try {
     const parsed = listingDecision.safeParse(await req.json().catch(() => null))
-    if (!parsed.success) throw new MarketStoreError('Review the complete listing URL, saved version and reason.', 400)
+    if (!parsed.success) throw new MarketStoreError('Review the complete listing URL, saved version.', 400)
     const { requestId, propertyId, ...input } = parsed.data
     const actor = await requireMarketOperator(propertyId)
     const result = await marketRpc('save_marketvision_listing', { p_id: requestId, p_property_id: propertyId, p_actor_id: actor, p_input: input })

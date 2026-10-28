@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const parsed = sourceRequest.safeParse(await req.json().catch(() => null))
-    if (!parsed.success) throw new MarketStoreError('Review the saved source, current version and reason for fetching it.', 400)
+    if (!parsed.success) throw new MarketStoreError('Review the saved source and current version before fetching.', 400)
     const { requestId, propertyId, ...input } = parsed.data
     const actor = await requireMarketOperator(propertyId)
     const result = await sourceRpc('begin_marketvision_source', { p_id: requestId, p_property_id: propertyId, p_actor_id: actor, p_input: input })
@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   try {
     const parsed = sourceControl.safeParse(await req.json().catch(() => null))
-    if (!parsed.success) throw new MarketStoreError('Review the saved fetch state, decision and reason.', 400)
+    if (!parsed.success) throw new MarketStoreError('Review the saved fetch state and requested action.', 400)
     const { requestId, propertyId, ...input } = parsed.data
     const actor = await requireMarketOperator(propertyId)
     const result = await sourceRpc('control_marketvision_source', { p_id: requestId, p_property_id: propertyId, p_actor_id: actor, p_input: input })

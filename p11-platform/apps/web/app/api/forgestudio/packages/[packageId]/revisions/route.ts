@@ -1,3 +1,4 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createClient as createServerClient } from '@/utils/supabase/server'
@@ -13,7 +14,7 @@ const createRevisionSchema = z.object({
   requestId: z.string().uuid(),
   expectedRevisionId: z.string().uuid(),
   content: revisionContentSchema,
-  modificationReason: z.string().min(3).max(2000),
+  modificationReason: decisionNote(),
 })
 
 async function resolvePackageProperty(packageId: string) {

@@ -1,3 +1,4 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {NextRequest,NextResponse} from 'next/server'
 import {z} from 'zod'
 import {requireReviewOperator,reviewError} from '@/utils/reviewflow/access'
@@ -6,7 +7,7 @@ import {ReviewStoreError} from '@/utils/reviewflow/analysis-store'
 import {responseIdSchema as uuid} from '@/utils/reviewflow/response-contracts'
 import {readInsightPreview,saveInsightReport} from '@/utils/reviewflow/insights-store'
 const read=z.object({propertyId:uuid,days:z.coerce.number().int().min(7).max(365).default(90),reportId:uuid.optional(),history:z.literal('true').optional(),cursor:uuid.optional()}).strict().refine(v=>!(v.reportId&&(v.history||v.cursor))&&(!v.cursor||v.history==='true'),'Choose either current insights, a saved report or report history.')
-const write=z.object({propertyId:uuid,requestId:uuid,windowDays:z.number().int().min(7).max(365),asOf:z.iso.datetime({offset:true}),sourceHash:z.string().regex(/^[a-f0-9]{64}$/),reason:z.string().trim().min(3).max(2000)}).strict()
+const write=z.object({propertyId:uuid,requestId:uuid,windowDays:z.number().int().min(7).max(365),asOf:z.iso.datetime({offset:true}),sourceHash:z.string().regex(/^[a-f0-9]{64}$/),reason:decisionNote(2000, 3)}).strict()
 export async function GET(request:NextRequest){try{
  const parsed=read.safeParse(Object.fromEntries(request.nextUrl.searchParams));if(!parsed.success)throw new ReviewStoreError('Choose a property and an insight window of 7–365 days.',400)
  const {propertyId,days,reportId,history,cursor}=parsed.data,actor=await requireReviewOperator(propertyId)

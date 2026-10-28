@@ -1,4 +1,5 @@
 'use client'
+import { DecisionNote } from '@/components/ui/decision-note'
 import {useState} from 'react'
 import {savedEditorialRequest} from '@/utils/forgestudio/client'
 import type {LibraryAsset} from '@/utils/forgestudio/asset-library'
@@ -24,8 +25,8 @@ export function AssetUploadForm({propertyId,replacing,onSaved,onRequestChanged}:
   <label className="block text-sm">Image description for accessibility<input className="mt-1 block w-full rounded border bg-transparent p-2" maxLength={1000} value={alt} onChange={e=>setAlt(e.target.value)}/></label>
   <label className="block text-sm">Rights status<select className="ml-2 rounded border bg-transparent p-2" value={rights} onChange={e=>setRights(e.target.value)}>{['unknown','owned','licensed','generated','restricted'].map(s=><option key={s}>{s}</option>)}</select></label>
   <label className="block text-sm">License or permission notes<textarea className="mt-1 block w-full rounded border bg-transparent p-2" maxLength={4000} value={license} onChange={e=>setLicense(e.target.value)}/></label>
-  {replacing&&<label className="block text-sm">Reason for replacing<textarea className="mt-1 block w-full rounded border bg-transparent p-2" maxLength={2000} value={reason} onChange={e=>setReason(e.target.value)}/></label>}
+  {replacing&&<DecisionNote><label className="block text-sm">Note (optional)<textarea className="mt-1 block w-full rounded border bg-transparent p-2" maxLength={2000} value={reason} onChange={e=>setReason(e.target.value)}/></label></DecisionNote>}
   {error&&<p role="alert" className="text-sm text-red-700">{error}</p>}
-  <button disabled={busy||!file||(!!replacing&&reason.trim().length<3)} className="rounded-lg bg-violet-600 px-4 py-2 text-white disabled:opacity-50">{busy?'Saving file…':replacing?'Save replacement file':'Upload file'}</button>
+  <button disabled={busy||!file} className="rounded-lg bg-violet-600 px-4 py-2 text-white disabled:opacity-50">{busy?'Saving file…':replacing?'Save replacement file':'Upload file'}</button>
  </form>
 }

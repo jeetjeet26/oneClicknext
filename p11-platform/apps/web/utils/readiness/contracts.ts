@@ -1,13 +1,15 @@
+import { decisionNote, requireDecisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {propertyIdSchema as id} from '@/utils/property-setup/contracts'
 const hash=z.string().regex(/^[a-f0-9]{64}$/)
 export const readinessCapabilities=['crm','tours','chatbot','analytics']as const
-const base={propertyId:id,requestId:id,reason:z.string().trim().min(3).max(2000)}
+const base={propertyId:id,requestId:id,reason:decisionNote()}
 export const readinessCommand=z.discriminatedUnion('operation',[
  z.object({...base,operation:z.literal('build'),enabledCapabilities:z.array(z.enum(readinessCapabilities)).max(4).refine(v=>new Set(v).size===v.length,'Choose each capability once')}).strict(),
  z.object({...base,operation:z.enum(['approve','reject','withdraw']),snapshotId:id,snapshotHash:hash,sourceHash:hash,confirmed:z.literal(true),allowManagerOverride:z.boolean().optional()}).strict(),
  z.object({...base,operation:z.literal('cancel_unused'),inputHash:hash}).strict()
-])
+]).superRefine((value, ctx) => { if (value.operation === 'reject' || ('allowManagerOverride' in value && value.allowManagerOverride === true)) requireDecisionNote(value, ctx) })
+
 export const readinessQuery=z.object({propertyId:id,kind:z.enum(['snapshots','snapshot','history','history_detail','decision','invalidations','active']).default('snapshots'),snapshotId:id.optional(),decisionId:id.optional(),offset:z.coerce.number().int().min(0).max(1000000).default(0),expectedHash:hash.optional()}).strict().refine(v=>v.kind==='snapshot'?!!v.snapshotId&&!v.decisionId:['decision','history_detail'].includes(v.kind)?!!v.decisionId&&!v.snapshotId:!v.snapshotId&&!v.decisionId)
 export type ReadinessCommand=z.infer<typeof readinessCommand>
 export type ReadinessCapability=typeof readinessCapabilities[number]

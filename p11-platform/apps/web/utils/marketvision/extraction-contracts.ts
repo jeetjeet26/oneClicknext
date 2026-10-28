@@ -1,6 +1,7 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {marketId,publicMarketUrl,unitValues} from './decision-contracts'
-const reason=z.string().trim().min(3).max(2000),version=z.number().int().positive(),hash=z.string().regex(/^[a-f0-9]{64}$/)
+const reason=decisionNote(2000, 3),version=z.number().int().positive(),hash=z.string().regex(/^[a-f0-9]{64}$/)
 export const extractionRead=z.object({propertyId:marketId,competitorId:marketId,requestId:marketId.optional(),cursor:marketId.optional()}).strict()
 export const extractionRequest=z.object({requestId:marketId,propertyId:marketId,competitorId:marketId,sourceVersion:version,sourceRequestId:marketId.optional(),confirmedSourceScope:z.literal(true).optional(),content:z.string().trim().min(50).max(50000),sourceUrl:z.string().trim().max(2000).refine(v=>!v||publicMarketUrl(v)),effectiveAt:z.string().datetime({offset:true}).nullable().refine(v=>v===null||new Date(v).getTime()<=Date.now()+300000),reason}).strict()
 export const extractionControl=z.object({requestId:marketId,propertyId:marketId,extractionId:marketId,expectedVersion:version,action:z.enum(['stop','recover','rebase']),reason}).strict()

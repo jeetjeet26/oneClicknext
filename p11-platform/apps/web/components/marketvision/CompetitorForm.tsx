@@ -1,4 +1,5 @@
 'use client'
+import { DecisionNote } from '@/components/ui/decision-note'
 
 import { useState, useEffect } from 'react'
 import { 
@@ -78,7 +79,7 @@ export function CompetitorForm({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showUnits, setShowUnits] = useState(formData.units.length > 0)
-  
+
   // Dynamic amenities from scraped data
   const [amenitiesOptions, setAmenitiesOptions] = useState<string[]>(FALLBACK_AMENITIES)
   const [loadingAmenities, setLoadingAmenities] = useState(true)
@@ -103,7 +104,7 @@ export function CompetitorForm({
         setLoadingAmenities(false)
       }
     }
-    
+
     fetchAmenities()
   }, [propertyId])
 
@@ -154,8 +155,8 @@ export function CompetitorForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
-    if (formData.reason.trim().length < 3) {setError('Add a reason for this change.');return}
+
+
     if (!formData.name.trim()) {
       setError('Competitor name is required')
       return
@@ -461,7 +462,7 @@ export function CompetitorForm({
             </div>
 
             </>}
-            <label className="block text-sm">Reason for this change<textarea required minLength={3} maxLength={2000} value={formData.reason} onChange={e=>handleChange('reason',e.target.value)} className="block w-full border rounded-lg p-2 mt-1" /></label>
+            <DecisionNote><label className="block text-sm">Note (optional)<textarea maxLength={2000} value={formData.reason} onChange={e=>handleChange('reason',e.target.value)} className="block w-full border rounded-lg p-2 mt-1" /></label></DecisionNote>
             <p className="text-xs text-gray-500">These are operator-reported details. Saving them does not verify them against a provider. Unknown prices and availability remain unknown.</p>
             {isEdit && <p className="text-sm text-gray-600">Edit individual saved units from the competitor details panel. This form changes property details only.</p>}
             {/* Notes */}

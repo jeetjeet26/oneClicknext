@@ -1,3 +1,4 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import { z } from 'zod'
 import { marketId, publicMarketUrl } from './decision-contracts'
 
@@ -11,7 +12,7 @@ const common = {
   propertyId: marketId,
   competitorId: marketId,
   expectedVersion: z.number().int().positive(),
-  reason: z.string().trim().min(3).max(2000),
+  reason: decisionNote(2000, 3),
 }
 export const listingDecision = z.discriminatedUnion('action', [
   z.object({ ...common, action: z.literal('save'), url: z.string().trim().max(2000).refine(isMarketListing, 'Use the complete Apartments.com listing URL') }).strict(),

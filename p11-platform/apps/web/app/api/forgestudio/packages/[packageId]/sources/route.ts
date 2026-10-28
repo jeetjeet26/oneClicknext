@@ -1,3 +1,4 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {NextRequest,NextResponse} from 'next/server'
 import {z} from 'zod'
 import {createClient} from '@/utils/supabase/server'
@@ -7,7 +8,7 @@ import {ContentStoreError} from '@/utils/forgestudio/content-store'
 import {getSourceReview,refreshSourceReview} from '@/utils/forgestudio/source-store'
 import {revisionContentSchema} from '@/utils/forgestudio/content-contract'
 type Context={params:Promise<{packageId:string}>}
-const bodySchema=z.object({requestId:z.string().uuid(),expectedRevisionId:z.string().uuid(),previewHash:z.string().regex(/^[a-f0-9]{64}$/),reason:z.string().trim().min(3).max(2000),content:revisionContentSchema,extraAssetIds:z.array(z.string().uuid()).max(50).default([])})
+const bodySchema=z.object({requestId:z.string().uuid(),expectedRevisionId:z.string().uuid(),previewHash:z.string().regex(/^[a-f0-9]{64}$/),reason:decisionNote(2000, 3),content:revisionContentSchema,extraAssetIds:z.array(z.string().uuid()).max(50).default([])})
 async function scope(packageId:string){
  if(!z.string().uuid().safeParse(packageId).success)throw new ContentStoreError('Invalid campaign',400)
  const auth=await createClient(),{data:{user},error}=await auth.auth.getUser()

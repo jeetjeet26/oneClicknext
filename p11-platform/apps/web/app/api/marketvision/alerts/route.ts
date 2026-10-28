@@ -10,7 +10,7 @@ export async function GET(req:NextRequest){try{
 }catch(e){return marketError(e)}}
 async function change(req:NextRequest,create:boolean){try{
  const raw=await req.json().catch(()=>({})),actor=await requireMarketOperator(String(raw?.propertyId??'')),parsed=(create?AlertCreate:AlertReview).safeParse(raw)
- if(!parsed.success)return NextResponse.json({error:'Review the exact alert selection and give a reason. Property-wide hidden selections are not supported.'},{status:400})
+ if(!parsed.success)return NextResponse.json({error:'Review the exact alert selection. Property-wide hidden selections are not supported.'},{status:400})
  const {propertyId,requestId,...input}=parsed.data
  return reply({result:await alertRpc(create?'create_marketvision_alert':'review_marketvision_alerts',{p_id:requestId,p_property_id:propertyId,p_actor_id:actor,p_input:input})})
 }catch(e){return marketError(e)}}

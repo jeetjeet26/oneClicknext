@@ -1,4 +1,5 @@
 'use client'
+import { HistoryNote } from '@/components/ui/decision-note'
 import {useEffect,useState} from 'react'
 import {savedEditorialRequest} from '@/utils/forgestudio/client'
 type Evidence={publication:{status:string;updated_at:string;remote_post_id:string|null};job:{lifecycle_status:string;lease_expires_at:string|null;status_reason:string}|null;receipts:Array<{id:string;kind:string;created_at:string;evidence:{reason?:string;providerPostId?:string;accountId?:string;snapshot?:{accountId?:string}}}>}
@@ -24,7 +25,7 @@ export function PublicationRecovery({publicationId,onSaved}:{publicationId:strin
   {error&&<p role="alert" className="text-sm text-red-700">{error}</p>}
   {!data&&!error&&<p role="status">Loading saved evidence…</p>}
   {data&&<>
-   <ul className="space-y-2 text-sm">{data.receipts.map(receipt=><li key={receipt.id}><strong>{labels[receipt.kind]||'Saved publication evidence'}</strong> · {new Date(receipt.created_at).toLocaleString()}{receipt.evidence.reason&&<p>{receipt.evidence.reason}</p>}{receipt.evidence.providerPostId&&<p>Post: {receipt.evidence.providerPostId}</p>}</li>)}</ul>
+   <ul className="space-y-2 text-sm">{data.receipts.map(receipt=><li key={receipt.id}><strong>{labels[receipt.kind]||'Saved publication evidence'}</strong> · {new Date(receipt.created_at).toLocaleString()}{receipt.evidence.reason&&<HistoryNote value={receipt.evidence.reason}/>}{receipt.evidence.providerPostId&&<p>Post: {receipt.evidence.providerPostId}</p>}</li>)}</ul>
    {data.receipts.length===0&&<p className="text-sm">No new publication receipt is saved. Older attempts must be reviewed before recovery.</p>}
    {active?<p className="text-sm">A worker still owns this publication. Reload its evidence after the current attempt ends.</p>:!closed&&<>
     <p className="text-sm">{intent?`A write may have reached account ${intent.evidence.snapshot?.accountId||'shown in the saved schedule'}. Check the exact content at that destination. This page cannot resend it.`:'After resolving the problem, a manager can resume only if the saved history proves no provider write was authorized.'}</p>

@@ -1,4 +1,5 @@
 'use client'
+import { DecisionNote } from '@/components/ui/decision-note'
 
 import {useEffect,useRef,useState} from 'react'
 import type {ScheduleResult} from '@/utils/services/tour-scheduling'
@@ -35,12 +36,12 @@ export function TourScheduleForm({leadId,tour,onSaved}:{leadId:string;tour:{time
    <label className="text-sm text-slate-700">New time<input type="time" required value={time} disabled={saving} onChange={e=>setTime(e.target.value)} className="mt-1 block w-full min-w-0 rounded-lg border border-slate-300 p-2"/></label>
   </div>}
   {action==='reschedule' && <p className="text-xs text-slate-500">{tour.timezone ? `Use ${tour.timezone}, the timezone saved for this tour.` : 'The tour timezone needs review before rescheduling.'} Availability is checked when saving.</p>}
-  <label className="block text-sm text-slate-700">Reason for change<textarea required maxLength={2000} rows={2} value={reason} disabled={saving} onChange={e=>setReason(e.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 p-2"/></label>
+  <DecisionNote><label className="block text-sm text-slate-700">Note (optional)<textarea maxLength={2000} rows={2} value={reason} disabled={saving} onChange={e=>setReason(e.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 p-2"/></label></DecisionNote>
   <label className="flex items-start gap-2 text-sm text-slate-700"><input type="checkbox" checked={notify} disabled={saving} onChange={e=>setNotify(e.target.checked)} className="mt-1"/>Queue an update for the prospect</label>
   <p className="text-xs text-slate-500">Old reminders will be stopped. Connected calendar changes and selected notifications are queued; saving does not confirm delivery.</p>
   {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
   <div className="flex flex-wrap gap-2">
-   <button type="submit" disabled={saving || !reason.trim()} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white disabled:opacity-50">{saving?'Saving…':action==='cancel'?'Confirm cancellation':'Save new time'}</button>
+   <button type="submit" disabled={saving} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white disabled:opacity-50">{saving?'Saving…':action==='cancel'?'Confirm cancellation':'Save new time'}</button>
    <button type="button" disabled={saving} onClick={()=>{setAction(null);setError(null)}} className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700">Close</button>
   </div>
  </form>

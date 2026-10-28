@@ -1,6 +1,7 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {responseIdSchema as uuid} from './response-contracts'
-const common={propertyId:uuid,requestId:uuid,reason:z.string().trim().min(3).max(2000)}
+const common={propertyId:uuid,requestId:uuid,reason:decisionNote(2000, 3)}
 export const intakeWriteSchema=z.discriminatedUnion('action',[
  z.object({...common,action:z.literal('save'),kind:z.enum(['manual','csv']),content:z.string().min(1).max(2_000_000),fileName:z.string().max(300).optional()}).strict(),
  z.object({...common,action:z.literal('fetch'),connectionId:uuid,connectionVersion:z.number().int().positive()}).strict(),

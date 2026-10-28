@@ -1,4 +1,5 @@
 'use client'
+import { DecisionNote } from '@/components/ui/decision-note'
 import {useCallback,useEffect,useRef,useState} from 'react'
 import {AssetPickerModal} from './AssetPickerModal'
 import {savedEditorialRequest} from '@/utils/forgestudio/client'
@@ -52,10 +53,10 @@ export function SourceReview({propertyId,packageId,revisionId,content,onSaved,on
     </fieldset>})}
     {content.variants.some(v=>v.assetIds.length>0)&&<label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={currentMedia} onChange={e=>setCurrentMedia(e.target.checked)}/>Use the current library files for retained media</label>}
     {draftChanged&&<button type="button" className="rounded border px-3 py-2 text-sm" onClick={()=>{setClaims(content.claims);setAssetSelections({});setFormats({});setCurrentMedia(false)}}>Discard source edits</button>}
-    <label className="block text-sm">Reason for refreshing sources<textarea className="mt-1 block w-full rounded border bg-transparent p-2" value={reason} maxLength={2000} onChange={e=>setReason(e.target.value)}/></label>
+    <DecisionNote><label className="block text-sm">Note (optional)<textarea className="mt-1 block w-full rounded border bg-transparent p-2" value={reason} maxLength={2000} onChange={e=>setReason(e.target.value)}/></label></DecisionNote>
     <p className="text-xs text-slate-500">This saves a new pending revision with your current caption edits. Review and approve that revision separately. Unstarted schedules for the old revision are cancelled. No model request is made.</p>
     {review.currentWarnings.map((w,n)=><p key={n} className="text-xs text-amber-800">{w.message}</p>)}
-    <button type="button" disabled={saving||loading||reason.trim().length<3||claims.some(c=>!c.text.trim())} onClick={()=>void save()} className="rounded-lg bg-violet-600 px-4 py-2 text-sm text-white disabled:opacity-50">{saving?'Saving refreshed revision…':'Save refreshed revision'}</button>
+    <button type="button" disabled={(saving||loading || claims.some(c=>!c.text.trim()))} onClick={()=>void save()} className="rounded-lg bg-violet-600 px-4 py-2 text-sm text-white disabled:opacity-50">{saving?'Saving refreshed revision…':'Save refreshed revision'}</button>
    </div></details>
   </>}
   {picking&&<AssetPickerModal propertyId={propertyId} onClose={()=>setPicking(null)} onSelect={asset=>{const key=picking;setExtraAssetIds(old=>old.includes(asset.id)?old:[...old,asset.id]);setAssetSelections(old=>({...old,[key]:[...new Set([...(old[key]??content.variants.find(v=>v.variantKey===key)?.assetIds??[]),asset.id])]}));setFormats(old=>({...old,[key]:asset.asset_type==='video'?'video':(content.variants.find(v=>v.variantKey===key)?.contentFormat==='carousel'?'carousel':'image')}));setPicking(null)}}/>}

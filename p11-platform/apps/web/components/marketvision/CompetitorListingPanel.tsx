@@ -1,4 +1,5 @@
 'use client'
+import { DecisionNote } from '@/components/ui/decision-note'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { sendMarketDecision } from '@/utils/marketvision/decision-client'
@@ -72,7 +73,7 @@ export function CompetitorListingPanel({ propertyId, competitorId, onChanged }: 
     <form aria-label="Listing decision" onSubmit={save}>
       <fieldset disabled={!saved || loading || saving || !saved.isActive} className="min-w-0 space-y-3">
         {removing ? <p>Remove the saved listing above from future source requests. Its historical evidence stays available.</p> : <label className="block">Listing URL<input type="url" required maxLength={2000} value={url} onChange={e => setUrl(e.target.value)} className="mt-1 block w-full min-w-0 rounded-lg border p-2" placeholder="https://www.apartments.com/community/city/" /></label>}
-        <label className="block">Reason for listing change<textarea required minLength={3} maxLength={2000} value={reason} onChange={e => setReason(e.target.value)} className="mt-1 block w-full rounded-lg border p-2" /></label>
+        <DecisionNote><label className="block">Note (optional)<textarea maxLength={2000} value={reason} onChange={e => setReason(e.target.value)} className="mt-1 block w-full rounded-lg border p-2" /></label></DecisionNote>
         <div className="flex flex-wrap gap-3">
           <button type="submit" className="rounded-lg bg-indigo-600 px-3 py-2 text-white disabled:opacity-50">{saving ? 'Saving…' : removing ? 'Confirm listing removal' : 'Save listing'}</button>
           {saved?.url && <button type="button" className="underline" onClick={() => { setRemoving(v => !v); setReason(''); setMessage(''); setError('') }}>{removing ? 'Keep listing' : 'Remove listing'}</button>}

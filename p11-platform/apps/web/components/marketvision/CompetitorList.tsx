@@ -1,4 +1,5 @@
 'use client'
+import { DecisionNote } from '@/components/ui/decision-note'
 import { useState } from 'react'
 import { Building2, ExternalLink, Plus, RefreshCw, Search } from 'lucide-react'
 import { sendMarketDecision } from '@/utils/marketvision/decision-client'
@@ -50,7 +51,7 @@ export function CompetitorList({propertyId, onAddClick, onEditClick, onViewClick
     </div>
     {(error || saveError) && <p role="alert" className="rounded-lg bg-red-50 p-4 text-red-700">{error || saveError}</p>}
     {data?.warnings.map(w => <p role="status" key={w} className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{w}</p>)}
-    {decision && <section aria-label="Review competitor status" className="space-y-3 rounded-xl border border-slate-200 bg-white p-4"><p>{decision.isActive ? 'Archive' : 'Restore'} {decision.name}? Saved units and history will be retained.</p><label className="block text-sm">Reason for status change<textarea value={reason} onChange={e => setReason(e.target.value)} minLength={3} maxLength={2000} className="block w-full rounded border p-2" /></label><button disabled={saving || reason.trim().length < 3} onClick={toggleActive} className="rounded border px-3 py-2 disabled:opacity-50">{saving ? 'Saving…' : decision.isActive ? 'Archive competitor' : 'Restore competitor'}</button> <button disabled={saving} onClick={() => setDecision(null)}>Cancel</button></section>}
+    {decision && <section aria-label="Review competitor status" className="space-y-3 rounded-xl border border-slate-200 bg-white p-4"><p>{decision.isActive ? 'Archive' : 'Restore'} {decision.name}? Saved units and history will be retained.</p><DecisionNote><label className="block text-sm">Note (optional)<textarea value={reason} onChange={e => setReason(e.target.value)} maxLength={2000} className="block w-full rounded border p-2" /></label></DecisionNote><button disabled={saving} onClick={toggleActive} className="rounded border px-3 py-2 disabled:opacity-50">{saving ? 'Saving…' : decision.isActive ? 'Archive competitor' : 'Restore competitor'}</button> <button disabled={saving} onClick={() => setDecision(null)}>Cancel</button></section>}
     {compare && data && comparison.length > 0 && <CompetitorProfileComparison subject={data.subject} competitors={comparison} />}
     {loading ? <p role="status" className="p-8 text-center text-slate-500">Loading competitor profiles and saved intelligence…</p> : !error && visible.length === 0 ? <div className="rounded-xl border border-slate-200 bg-white p-8 text-center"><Building2 className="mx-auto mb-3 h-8 w-8 text-slate-400" /><p>{search ? 'No saved profiles match your search.' : 'No competitors in this view.'}</p>{!search && <button onClick={onAddClick} className="mt-3 text-emerald-700 underline">Add a competitor</button>}</div> : <div className="grid items-start gap-5 xl:grid-cols-2">
       {visible.map(c => {

@@ -1,6 +1,7 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {marketId} from './decision-contracts'
-const reason=z.string().trim().min(3).max(2000)
+const reason=decisionNote(2000, 3)
 export const AlertRead=z.object({propertyId:marketId,view:z.enum(['open','unread','dismissed','all']).default('open'),cursor:marketId.optional(),limit:z.coerce.number().int().min(1).max(50).default(20)}).strict()
 export const AlertCreate=z.object({propertyId:marketId,requestId:marketId,title:z.string().trim().min(1).max(300),description:z.string().trim().max(4000).nullable(),severity:z.enum(['info','warning','critical']),competitorId:marketId.nullable(),reason}).strict()
 export const AlertReview=z.object({propertyId:marketId,requestId:marketId,action:z.enum(['read','dismiss','restore']),alerts:z.array(z.object({id:marketId,expectedVersion:z.number().int().positive()}).strict()).min(1).max(50).refine(a=>new Set(a.map(x=>x.id)).size===a.length),reason}).strict()

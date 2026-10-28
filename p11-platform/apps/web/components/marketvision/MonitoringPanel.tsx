@@ -1,4 +1,5 @@
 'use client'
+import { DecisionNote } from '@/components/ui/decision-note'
 
 /**
  * Monitoring settings + durable run history.
@@ -164,7 +165,7 @@ export function MonitoringPanel({ propertyId,openRequestId }: MonitoringPanelPro
           </span>
         </label>
 
-        <label className="block text-sm">Reason for settings change<textarea minLength={3} maxLength={2000} value={reason} onChange={e=>setReason(e.target.value)} className="block w-full border rounded p-2 mt-1" /></label>
+        <DecisionNote><label className="block text-sm">Note (optional)<textarea maxLength={2000} value={reason} onChange={e=>setReason(e.target.value)} className="block w-full border rounded p-2 mt-1" /></label></DecisionNote>
         </fieldset>
         {!canManage&&ready&&<p className="text-sm text-gray-500">A property manager can change these settings.</p>}
         <p className="text-sm text-gray-500">Saving changes controls eligibility for the scheduled pricing worker. It does not start an immediate refresh. Automatic competitor discovery is separate.</p>
@@ -179,7 +180,7 @@ export function MonitoringPanel({ propertyId,openRequestId }: MonitoringPanelPro
 
         <button
           onClick={save}
-          disabled={isSaving||!ready||!canManage||reason.trim().length<3}
+          disabled={isSaving||!ready||!canManage}
           className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 text-sm"
         >
           {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}

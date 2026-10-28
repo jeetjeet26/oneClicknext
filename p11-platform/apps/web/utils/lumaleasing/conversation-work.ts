@@ -1,5 +1,6 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
-const uuid=z.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i),hash=z.string().regex(/^[a-f0-9]{64}$/),identity={id:uuid,propertyId:uuid,expectedActorId:uuid},source={conversationId:uuid,sourceHash:hash},reason=z.string().trim().min(1).max(2000)
+const uuid=z.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i),hash=z.string().regex(/^[a-f0-9]{64}$/),identity={id:uuid,propertyId:uuid,expectedActorId:uuid},source={conversationId:uuid,sourceHash:hash},reason=decisionNote(2000, 1)
 export const conversationRead=z.object({propertyId:uuid,conversationId:uuid.optional(),kind:z.enum(['list','messages','history','command','service']).default('list'),commandId:uuid.optional(),offset:z.coerce.number().int().min(0).max(100000).default(0),hash:hash.optional(),archived:z.enum(['true','false']).default('false'),leadId:uuid.optional()}).strict()
 export const conversationDecision=z.discriminatedUnion('operation',[
  z.object({...identity,...source,operation:z.literal('takeover'),reason}).strict(),

@@ -1,7 +1,8 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {propertyIdSchema as id} from '@/utils/property-setup/contracts'
 import {digest,validText,type Material} from './material-contracts'
-const reason=z.string().trim().min(3).max(2000),base={requestId:id,propertyId:id,reason}
+const reason=decisionNote(2000, 3),base={requestId:id,propertyId:id,reason}
 export const websiteUrl=z.string().max(2000).refine(value=>{try{const u=new URL(value);return['http:','https:'].includes(u.protocol)&&!u.username&&!u.password&&!u.hash&&(!u.port||['80','443'].includes(u.port))&&u.hostname.includes('.')&&!u.hostname.endsWith('.localhost')}catch{return false}},'Use a complete public HTTP(S) page address without credentials or a fragment.')
 export const webCommand=z.discriminatedUnion('operation',[
  z.object({...base,operation:z.literal('cancel_unused'),inputHash:digest}).strict(),

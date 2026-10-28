@@ -1,3 +1,4 @@
+import { decisionNote, requireDecisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {propertyIdSchema as id} from '@/utils/property-setup/contracts'
 const digest=z.string().regex(/^[a-f0-9]{64}$/),instant=z.string().datetime({offset:true})
@@ -5,12 +6,13 @@ export const legalDocumentKeys=['privacy_policy','terms','accessibility','fair_h
 export const legalDocumentLabels:Record<typeof legalDocumentKeys[number],string>={privacy_policy:'Privacy policy',terms:'Terms',accessibility:'Accessibility statement',fair_housing:'Fair Housing statement',pricing_disclaimer:'Pricing disclaimer',analytics_consent:'Analytics and cookie consent',communications_consent:'Communications consent'}
 const document=z.object({text:z.string().max(100000),sourceUrl:z.union([z.literal(''),z.string().url().max(4000).refine(v=>/^https?:\/\//.test(v)&&!new URL(v).username&&!new URL(v).password)]).optional(),reviewedAt:instant.nullable().optional()}).catchall(z.unknown())
 export const legalDraft=z.object({jurisdiction:z.string().max(200),legalEntityName:z.string().max(300),effectiveAt:instant.nullable(),documents:z.object({privacy_policy:document,terms:document,accessibility:document,fair_housing:document,pricing_disclaimer:document,analytics_consent:document,communications_consent:document}).strict(),sourceReferences:z.array(z.record(z.string(),z.unknown())).max(200)}).strict()
-const base={requestId:id,propertyId:id,reason:z.string().trim().min(3).max(2000)}
+const base={requestId:id,propertyId:id,reason:decisionNote()}
 export const legalCommand=z.discriminatedUnion('operation',[
  z.object({...base,operation:z.literal('save'),expectedStateHash:digest,sourceVersionId:id.nullable(),draft:legalDraft}).strict(),
  z.object({...base,operation:z.enum(['approve','reject','withdraw']),expectedStateHash:digest,versionId:id,versionHash:digest,confirmed:z.literal(true)}).strict(),
  z.object({...base,operation:z.literal('cancel_unused'),inputHash:digest}).strict()
-])
+]).superRefine((value, ctx) => { if (!['save', 'cancel_unused'].includes(value.operation)) requireDecisionNote(value, ctx) })
+
 export const legalQuery=z.object({propertyId:id,kind:z.enum(['versions','version','history','history_detail','decision']).default('versions'),versionId:id.optional(),decisionId:id.optional(),offset:z.coerce.number().int().min(0).max(1000000).default(0),expectedHash:digest.optional()}).strict().refine(v=>v.kind==='version'?!!v.versionId&&!v.decisionId:['decision','history_detail'].includes(v.kind)?!!v.decisionId&&!v.versionId:!v.versionId&&!v.decisionId)
 export type LegalDraft=z.infer<typeof legalDraft>
 export type LegalCommand=z.infer<typeof legalCommand>

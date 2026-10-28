@@ -1,3 +1,4 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {after,NextRequest,NextResponse} from 'next/server'
 import {z} from 'zod'
 import {responseIdSchema as databaseId} from '@/utils/reviewflow/response-contracts'
@@ -6,7 +7,7 @@ import {createServiceClient} from '@/utils/supabase/admin'
 import {validatePropertyAccess} from '@/utils/services/auth-guard'
 import {ReviewStoreError,requestReviewAnalysis,reviewRpc,runSavedReviewAnalysis,recoverReviewAnalysis} from '@/utils/reviewflow/analysis-store'
 const start=z.object({propertyId:databaseId,requestId:databaseId,reviewId:databaseId,sourceVersion:z.number().int().positive()}).strict()
-const control=z.object({propertyId:databaseId,requestId:databaseId,analysisRequestId:databaseId,expectedVersion:z.number().int().positive(),action:z.enum(['stop','recover']),reason:z.string().trim().min(3).max(2000)}).strict()
+const control=z.object({propertyId:databaseId,requestId:databaseId,analysisRequestId:databaseId,expectedVersion:z.number().int().positive(),action:z.enum(['stop','recover']),reason:decisionNote(2000, 3)}).strict()
 const querySchema=z.object({propertyId:databaseId,reviewId:databaseId.optional(),cursor:databaseId.optional()})
 const paused=()=>process.env.OUTBOUND_DELIVERY_PAUSED==='true'
 async function actor(propertyId:string){const {data:{user},error}=await(await createClient()).auth.getUser();if(error||!user)throw new ReviewStoreError('Unauthorized',401);if(!(await validatePropertyAccess(user.id,propertyId)).authorized)throw new ReviewStoreError('Forbidden',403);return user.id}

@@ -1,6 +1,7 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {marketId} from './decision-contracts'
-const reason=z.string().trim().min(3).max(2000),version=z.number().int().positive(),hash=z.string().regex(/^[a-f0-9]{64}$/)
+const reason=decisionNote(),version=z.number().int().positive(),hash=z.string().regex(/^[a-f0-9]{64}$/)
 export const brandCategories=['positioning','audience','voice','amenity','service','promotion','lifestyle','messaging','call_to_action']as const
 export const BrandClaim=z.object({category:z.enum(brandCategories),kind:z.enum(['source_claim','interpretation']),statement:z.string().min(1).max(1000).refine(s=>s.trim().length>0),quote:z.string().min(1).max(1000)}).strict()
 export const BrandOutput=z.object({claims:z.array(BrandClaim).max(50),notes:z.string().max(5000).nullable()}).strict()

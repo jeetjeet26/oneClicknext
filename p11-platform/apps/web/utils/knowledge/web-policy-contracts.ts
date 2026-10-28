@@ -1,7 +1,8 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {propertyIdSchema as id} from '@/utils/property-setup/contracts'
 import {digest} from './material-contracts'
-const base={requestId:id,propertyId:id,reason:z.string().trim().min(3).max(2000)}
+const base={requestId:id,propertyId:id,reason:decisionNote(2000, 3)}
 export const webPolicyCommand=z.discriminatedUnion('operation',[
  z.object({...base,operation:z.literal('save'),expectedRevision:z.number().int().min(0).max(999999999),enabled:z.boolean(),intervalHours:z.number().int().min(24).max(168),dailyLimit:z.number().int().min(1).max(5),confirmed:z.literal(true)}).strict(),
  z.object({...base,operation:z.literal('cancel_unused'),inputHash:digest}).strict()

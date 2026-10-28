@@ -1,3 +1,4 @@
+import { decisionNote, hasDecisionNote } from '@/utils/actions/decision-note'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createClient as createServerClient } from '@/utils/supabase/server'
@@ -9,8 +10,8 @@ const approvalSchema = z.object({
   requestId: z.string().uuid(),
   contentHash: z.string().regex(/^[0-9a-f]{64}$/),
   decision: z.enum(['approved', 'denied']),
-  note: z.string().min(3).max(2000),
-})
+  note: decisionNote(),
+}).superRefine((value, ctx) => { if (value.decision === 'denied' && !hasDecisionNote(value.note)) ctx.addIssue({code: 'custom', path: ['note'], message: 'Explain what needs to change before rejecting this revision.'}) })
 
 // POST - Approve or deny a pending revision (manager/admin only).
 // Approval is bound to the exact immutable revision, never the package.

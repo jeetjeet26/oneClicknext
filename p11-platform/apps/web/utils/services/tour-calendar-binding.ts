@@ -1,3 +1,4 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import type {Database,Json} from '@/types/supabase'
 import type {SupabaseClient} from '@supabase/supabase-js'
@@ -7,7 +8,7 @@ const id=z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 const common={propertyId:id,bookingId:id,version:z.number().int().positive()}
 export const calendarBindingSchema=z.discriminatedUnion('action',[
  z.object({...common,action:z.literal('list'),cursor:z.string().max(8192).optional()}).strict(),
- z.object({...common,action:z.literal('bind'),requestId:z.string().uuid(),calendarId:id,credentialVersion:z.number().int().positive(),providerEventId:z.string().min(1).max(1024).regex(/^\S+$/),reason:z.string().trim().min(1).max(2000)}).strict(),
+ z.object({...common,action:z.literal('bind'),requestId:z.string().uuid(),calendarId:id,credentialVersion:z.number().int().positive(),providerEventId:z.string().min(1).max(1024).regex(/^\S+$/),reason:decisionNote(2000, 1)}).strict(),
 ])
 type BindingDatabase=Omit<Database,'public'>&{public:Omit<Database['public'],'Functions'>&{Functions:Database['public']['Functions']&{
  tour_calendar_binding_context:{Args:{p_property_id:string;p_booking_id:string};Returns:Json}

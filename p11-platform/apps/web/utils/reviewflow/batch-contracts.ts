@@ -1,6 +1,7 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {responseIdSchema as uuid} from './response-contracts'
-const common={propertyId:uuid,requestId:uuid,reason:z.string().trim().min(3).max(2000)}
+const common={propertyId:uuid,requestId:uuid,reason:decisionNote(2000, 3)}
 export const batchWriteSchema=z.discriminatedUnion('action',[
  z.object({...common,action:z.literal('prepare'),scope:z.literal('unanalyzed_current')}).strict(),
  z.object({...common,action:z.literal('approve'),batchId:uuid,expectedVersion:z.number().int().positive(),maxModelCalls:z.number().int().min(1).max(1000000)}).strict(),

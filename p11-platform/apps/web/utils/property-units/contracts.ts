@@ -1,3 +1,4 @@
+import { decisionNote, requireDecisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {propertyIdSchema as id} from '@/utils/property-setup/contracts'
 import {digest} from '@/utils/knowledge/material-contracts'
@@ -7,12 +8,13 @@ const money=z.number().min(0).max(99999999.99).refine(n=>Math.abs(n*100-Math.rou
 const instant=z.string().datetime({offset:true})
 const sourceUrl=z.string().max(2000).refine(value=>{if(!value)return true;try{const u=new URL(value);return['http:','https:'].includes(u.protocol)&&!u.username&&!u.password}catch{return false}},'Use an HTTP(S) source link without credentials.')
 export const unitData=z.object({canonicalKey:z.string().regex(/^[a-z0-9][a-z0-9_-]{0,99}$/),name:z.string().trim().min(1).max(200),bedrooms:z.number().int().min(0).max(50),bathrooms:z.number().min(0).max(99.9).refine(n=>Math.abs(n*10-Math.round(n*10))<0.00001).nullable(),sqftMin:area,sqftMax:area,priceMin:money,priceMax:money,deposit:money,available:count,specials:z.string().max(4000),sourceLabel:z.string().trim().min(3).max(300),sourceUrl,sourceNote:z.string().min(3).refine(v=>!!v.trim()&&new TextEncoder().encode(v).length<=32768&&!v.includes('\0')&&!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(v)),observedAt:instant,effectiveAt:instant.nullable(),expiresAt:instant.nullable()}).strict().superRefine((v,ctx)=>{if(v.priceMin!==null&&v.priceMax!==null&&v.priceMin>v.priceMax)ctx.addIssue({code:'custom',message:'Minimum price exceeds maximum price.'});if(v.sqftMin!==null&&v.sqftMax!==null&&v.sqftMin>v.sqftMax)ctx.addIssue({code:'custom',message:'Minimum area exceeds maximum area.'});if(v.effectiveAt&&v.expiresAt&&Date.parse(v.effectiveAt)>=Date.parse(v.expiresAt))ctx.addIssue({code:'custom',message:'Expiry must be after the effective time.'})})
-const reason=z.string().trim().min(3).max(2000),base={requestId:id,propertyId:id,reason}
+const reason=decisionNote(2000, 3),base={requestId:id,propertyId:id,reason}
 export const unitCommand=z.discriminatedUnion('operation',[
  z.object({...base,operation:z.literal('cancel_unused'),inputHash:digest}).strict(),
  z.object({...base,operation:z.literal('save'),unitId:id.nullable(),expectedDraftId:id.nullable(),expectedDecisionId:id.nullable(),expectedUnitHash:digest,copiedFromVersionId:id.nullable(),data:unitData}).strict(),
  z.object({...base,operation:z.enum(['approve','reject','retire','restore']),unitId:id,versionId:id,expectedDraftId:id,expectedAppliedId:id.nullable(),expectedDecisionId:id,expectedUnitHash:digest,dataHash:digest,confirmed:z.literal(true)}).strict()
-])
+]).superRefine((value, ctx) => { if (value.operation === 'reject') requireDecisionNote(value, ctx) })
+
 export const unitQuery=z.object({propertyId:id,kind:z.enum(['units','unit','versions','decisions','decision']).default('units'),unitId:id.optional(),versionId:id.optional(),decisionId:id.optional(),search:z.string().max(200).default(''),offset:z.coerce.number().int().min(0).max(1000000).default(0),expectedHash:digest.optional()}).strict().refine(v=>v.kind==='units'?!v.unitId&&!v.versionId&&!v.decisionId:v.kind==='decision'?!!v.decisionId&&!v.versionId:!!v.unitId&&!v.decisionId&&(v.kind==='unit'||!v.versionId))
 export type UnitData=z.infer<typeof unitData>
 export type UnitCommand=z.infer<typeof unitCommand>

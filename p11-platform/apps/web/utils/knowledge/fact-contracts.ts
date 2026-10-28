@@ -1,7 +1,8 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {propertyIdSchema as id} from '@/utils/property-setup/contracts'
 import {digest} from './material-contracts'
-const reason=z.string().trim().min(3).max(2000),base={requestId:id,propertyId:id,reason}
+const reason=decisionNote(2000, 3),base={requestId:id,propertyId:id,reason}
 const text=z.string().min(1).refine(s=>!!s.trim()&&!s.includes('\0')&&!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(s)&&new TextEncoder().encode(s).length<=5242880)
 export const factCommand=z.discriminatedUnion('operation',[
  z.object({...base,operation:z.literal('prepare'),expectedDraftId:id.nullable(),expectedSourceHash:digest,expectedContextHash:digest,markdown:z.null()}).strict(),

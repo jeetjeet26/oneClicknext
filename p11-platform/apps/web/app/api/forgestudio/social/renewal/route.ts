@@ -1,3 +1,4 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {NextRequest,NextResponse} from 'next/server'
 import {z} from 'zod'
 import {createClient} from '@/utils/supabase/server'
@@ -6,7 +7,7 @@ import {validatePropertyManagerAccess} from '@/utils/services/auth-guard'
 import {renewSocialConnection} from '@/utils/forgestudio/renewal'
 import {ContentStoreError} from '@/utils/forgestudio/content-store'
 const querySchema=z.object({propertyId:z.string().uuid(),cursor:z.string().uuid().optional()})
-const requestSchema=z.object({propertyId:z.string().uuid(),requestId:z.string().uuid(),connectionId:z.string().uuid(),expectedVersion:z.number().int().positive(),reason:z.string().trim().min(3).max(2000)}).strict()
+const requestSchema=z.object({propertyId:z.string().uuid(),requestId:z.string().uuid(),connectionId:z.string().uuid(),expectedVersion:z.number().int().positive(),reason:decisionNote(2000, 3)}).strict()
 export async function GET(request:NextRequest){
  try{
   const {data:{user},error}=await(await createClient()).auth.getUser();if(error||!user)return NextResponse.json({error:'Unauthorized'},{status:401})

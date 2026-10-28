@@ -1,8 +1,9 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {propertyIdSchema as id} from '@/utils/property-setup/contracts'
 export const digest=z.string().regex(/^[a-f0-9]{64}$/)
 export function validText(value:string){return !!value.trim()&&!/[\u0000\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(value)&&!value.includes('\0')&&new TextEncoder().encode(value).length<=262144}
-const reason=z.string().trim().min(3).max(2000)
+const reason=decisionNote(2000, 3)
 const base={requestId:id,propertyId:id,reason}
 export const materialCommand=z.discriminatedUnion('operation',[
  z.object({...base,operation:z.literal('cancel_unused'),inputHash:digest}).strict(),

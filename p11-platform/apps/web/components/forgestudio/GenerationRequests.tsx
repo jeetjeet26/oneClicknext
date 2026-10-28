@@ -1,4 +1,5 @@
 'use client'
+import { DecisionNote } from '@/components/ui/decision-note'
 import {useCallback,useEffect,useRef,useState} from 'react'
 import {savedEditorialRequest} from '@/utils/forgestudio/client'
 type Row={id:string;brief_id:string;state:string;package_id:string|null;revision_id:string;error_code:string|null;created_at:string;updated_at:string;claim_expires_at:string;hasSavedResult:boolean;social_content_briefs:{title:string}|null}
@@ -35,7 +36,7 @@ export function GenerationRequests({propertyId,refreshKey,onGenerated}:{property
     {!['completed','stopped'].includes(row.state)&&<button disabled={Boolean(busy)} className="text-amber-700 underline" onClick={()=>{setStopId(row.id);setReason('')}}>Stop this request</button>}
     {['failed','stopped'].includes(row.state)&&<button disabled={Boolean(busy)} className="text-violet-700 underline" onClick={()=>void decide(row,'new_attempt')}>Request a new model run from this brief</button>}
    </div>
-   {stopId===row.id&&<div className="space-y-2"><p className="text-sm">Stopping prevents this result from becoming a campaign. A provider request already sent may still finish or incur its charge.</p><label className="block text-sm">Reason for stopping<textarea value={reason} onChange={event=>setReason(event.target.value)} className="mt-1 block w-full rounded border p-2" maxLength={2000}/></label><button onClick={()=>void decide(row,'stop')} disabled={Boolean(busy)||reason.trim().length<10} className="rounded bg-amber-700 px-3 py-2 text-sm text-white disabled:opacity-50">Save stop decision</button></div>}
+   {stopId===row.id&&<div className="space-y-2"><p className="text-sm">Stopping prevents this result from becoming a campaign. A provider request already sent may still finish or incur its charge.</p><DecisionNote><label className="block text-sm">Note (optional)<textarea value={reason} onChange={event=>setReason(event.target.value)} className="mt-1 block w-full rounded border p-2" maxLength={2000}/></label></DecisionNote><button onClick={()=>void decide(row,'stop')} disabled={Boolean(busy)} className="rounded bg-amber-700 px-3 py-2 text-sm text-white disabled:opacity-50">Save stop decision</button></div>}
   </div>)}
  {nextCursor&&<button disabled={Boolean(busy)||loadingMore} className="text-sm underline" onClick={()=>void load(nextCursor)}>{loadingMore?'Loading earlier requests…':'Load earlier generation requests'}</button>}
  </section>

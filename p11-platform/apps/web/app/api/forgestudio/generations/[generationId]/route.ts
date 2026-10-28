@@ -1,3 +1,4 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {NextRequest,NextResponse} from 'next/server'
 import {z} from 'zod'
 import {createClient} from '@/utils/supabase/server'
@@ -6,7 +7,7 @@ import {validatePropertyAccess} from '@/utils/services/auth-guard'
 import {ContentStoreError} from '@/utils/forgestudio/content-store'
 import {GenerationClaimError} from '@/utils/forgestudio/generation'
 import {generationRpc,recoverGeneration} from '@/utils/forgestudio/generation-store'
-const schema=z.discriminatedUnion('action',[z.object({action:z.literal('recover'),requestId:z.string().uuid()}),z.object({action:z.literal('stop'),requestId:z.string().uuid(),expectedUpdatedAt:z.string().datetime({offset:true}),reason:z.string().trim().min(10).max(2000)})])
+const schema=z.discriminatedUnion('action',[z.object({action:z.literal('recover'),requestId:z.string().uuid()}),z.object({action:z.literal('stop'),requestId:z.string().uuid(),expectedUpdatedAt:z.string().datetime({offset:true}),reason:decisionNote(2000, 10)})])
 export async function POST(request:NextRequest,{params}:{params:Promise<{generationId:string}>}){
  try{
   const {data:{user},error:authError}=await (await createClient()).auth.getUser()

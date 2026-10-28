@@ -20,6 +20,6 @@ export async function POST(req:Request){try{
   return NextResponse.json(await uploadOriginal(actor,form),{headers})
  }
  const bytes=await boundedBytes(req,1048576);let body:unknown;try{body=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes))}catch{throw new FileError('Provide a valid file decision.',400)}
- const command=fileCommand.safeParse(body);if(!command.success)throw new FileError('Review the file, exact extraction and reason before continuing.',400)
+ const command=fileCommand.safeParse(body);if(!command.success)throw new FileError('Review the file, exact extraction before continuing.',400)
  return NextResponse.json(await decideFile(actor,command.data),{headers})
 }catch(e){return failure(e)}}

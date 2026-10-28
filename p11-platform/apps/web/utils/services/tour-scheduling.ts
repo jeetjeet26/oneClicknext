@@ -1,3 +1,4 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {actionHistoryDb} from '@/utils/actions/history'
 import type {Database, Json} from '@/types/supabase'
 import type {SupabaseClient} from '@supabase/supabase-js'
@@ -7,7 +8,7 @@ import type {TourSource} from './tour-outcomes'
 
 export const scheduleChangeSchema = z.object({
   tourId: z.string().uuid(), requestId: z.string().uuid(), expectedVersion: z.number().int().positive(),
-  action: z.enum(['reschedule','cancel']), reason: z.string().trim().min(1).max(2000), notify: z.boolean().default(false),
+  action: z.enum(['reschedule','cancel']), reason: decisionNote(2000, 1), notify: z.boolean().default(false),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value=>{const date=new Date(`${value}T00:00:00Z`);return !Number.isNaN(date.getTime()) && date.toISOString().slice(0,10)===value},'Choose a valid date.').optional(), time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
 }).superRefine((data, ctx) => {
   if(data.action === 'reschedule' && (!data.date || !data.time)) ctx.addIssue({code:'custom',message:'Choose a date and time.'})

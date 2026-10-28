@@ -1,3 +1,4 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {NextRequest,NextResponse} from 'next/server'
 import {z} from 'zod'
 import {createClient} from '@/utils/supabase/server'
@@ -31,7 +32,7 @@ const requestSchema = z.discriminatedUnion('modality', [
 ])
 
 
-const decisionSchema=z.object({propertyId:z.string().uuid(),requestId:z.string().uuid(),jobId:z.string().uuid(),action:z.enum(['stop','recover']),expectedUpdatedAt:z.string().datetime({offset:true}),reason:z.string().trim().min(3).max(2000)}).strict()
+const decisionSchema=z.object({propertyId:z.string().uuid(),requestId:z.string().uuid(),jobId:z.string().uuid(),action:z.enum(['stop','recover']),expectedUpdatedAt:z.string().datetime({offset:true}),reason:decisionNote(2000, 3)}).strict()
 function failure(error:unknown){return NextResponse.json({error:error instanceof Error?error.message:'Media request unavailable'},{status:error instanceof ContentStoreError?error.statusCode:503})}
 async function actor(){const {data:{user}}=await(await createClient()).auth.getUser();return user}
 export async function GET(request:NextRequest){

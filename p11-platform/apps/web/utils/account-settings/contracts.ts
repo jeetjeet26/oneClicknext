@@ -1,6 +1,7 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import{z}from'zod'
 import{propertyIdSchema as id}from'@/utils/property-setup/contracts'
-const hash=z.string().regex(/^[a-f0-9]{64}$/),base={orgId:id,requestId:id,reason:z.string().trim().min(3).max(2000)},review={...base,sourceHash:hash,confirmed:z.literal(true)}
+const hash=z.string().regex(/^[a-f0-9]{64}$/),base={orgId:id,requestId:id,reason:decisionNote(2000, 3)},review={...base,sourceHash:hash,confirmed:z.literal(true)}
 export const accountCommand=z.discriminatedUnion('operation',[
  z.object({...review,operation:z.literal('save_organization'),section:z.literal('organization'),name:z.string().trim().min(2).max(120),timezone:z.string().min(1).max(100).refine(v=>{try{new Intl.DateTimeFormat('en',{timeZone:v});return true}catch{return false}},'Choose a recognized time zone.')}).strict(),
  z.object({...review,operation:z.literal('save_profile'),section:z.literal('personal'),fullName:z.string().trim().min(1).max(120)}).strict(),

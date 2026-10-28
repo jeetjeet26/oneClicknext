@@ -244,10 +244,6 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
 
   const saveEditsAsNewRevision = async () => {
     if (!detail || !revision) return
-    if (!reviewNote.trim()) {
-      setError('Describe why the content was modified before saving a new revision.')
-      return
-    }
     setSaving(true)
     setError(null)
     try {
@@ -275,8 +271,8 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
 
   const submitReview = async (decision: 'approved' | 'denied') => {
     if (!revision) return
-    if (!reviewNote.trim()) {
-      setError('A review rationale is required for every approval or denial.')
+    if (decision === 'denied' && !reviewNote.trim()) {
+      setError('Explain what needs to change before rejecting this revision.')
       return
     }
     setReviewing(decision)
@@ -560,7 +556,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
               </div>
 
               {/* Save edits → new revision */}
-              {hasEdits && <label className="block text-sm">Reason for this revision<input value={reviewNote} onChange={event=>setReviewNote(event.target.value)} maxLength={2000} className="mt-1 block w-full rounded-lg border bg-transparent px-3 py-2"/></label>}
+              {hasEdits && <label className="block text-sm">Revision note (optional)<input value={reviewNote} onChange={event=>setReviewNote(event.target.value)} maxLength={2000} className="mt-1 block w-full rounded-lg border bg-transparent px-3 py-2"/></label>}
               {hasEdits && (
                 <div className="flex flex-wrap gap-3 items-center justify-between bg-violet-50 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/30 rounded-lg p-3">
                   <p className="text-sm text-violet-800 dark:text-violet-200">
@@ -569,7 +565,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                   </p>
                   <button
                     onClick={saveEditsAsNewRevision}
-                    disabled={saving||reviewNote.trim().length<3}
+                    disabled={saving}
                     className="flex items-center gap-1.5 px-4 py-2 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 flex-shrink-0"
                   >
                     {saving ? (
@@ -591,7 +587,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                   <input
                     value={reviewNote}
                     onChange={(event) => setReviewNote(event.target.value)}
-                    placeholder="Required rationale: why approved or what must change"
+                    placeholder="Optional for approval; explain what must change when rejecting"
                     className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm"
                   />
                   <div className="flex gap-2">
@@ -600,8 +596,7 @@ export function ReviewStudio({ propertyId, packageId, onClose, onChanged }: Revi
                       disabled={
                         reviewing !== null || !sourcesReady || sourceEdits ||
                         unsupportedClaims.length > 0 ||
-                        validationIssues.length > 0 ||
-                        !reviewNote.trim()
+                        validationIssues.length > 0
                       }
                       className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium ${
                         unsupportedClaims.length > 0 || validationIssues.length > 0

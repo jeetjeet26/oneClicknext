@@ -1,15 +1,17 @@
+import { decisionNote, requireDecisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {propertyIdSchema as id} from '@/utils/property-setup/contracts'
 const digest=z.string().regex(/^[a-f0-9]{64}$/)
 const decimal=(min:number,max:number,places:number)=>z.number().min(min).max(max).refine(v=>Math.abs(v*10**places-Math.round(v*10**places))<0.000001,'Use the supported decimal precision').nullable()
 export const neighborhoodDraft=z.object({name:z.string().max(300),category:z.string().max(100),address:z.record(z.string(),z.unknown()),latitude:decimal(-90,90,6),longitude:decimal(-180,180,6),distanceMiles:decimal(0,999999.99,2),travelTimeMinutes:z.number().int().min(0).max(2147483647).nullable(),sourceUrl:z.union([z.literal(''),z.string().url().max(4000).refine(v=>/^https?:\/\//.test(v)&&!new URL(v).username&&!new URL(v).password)]),capturedAt:z.string().datetime({offset:true}).nullable(),confidence:decimal(0,1,4)}).strict().refine(v=>(v.latitude===null)===(v.longitude===null),'Supply both coordinates or leave both unknown')
-const base={requestId:id,propertyId:id,reason:z.string().trim().min(3).max(2000)},existing={pointId:id,expectedStateHash:digest,confirmed:z.literal(true)}
+const base={requestId:id,propertyId:id,reason:decisionNote(2000, 3)},existing={pointId:id,expectedStateHash:digest,confirmed:z.literal(true)}
 export const neighborhoodCommand=z.discriminatedUnion('operation',[
  z.object({...base,operation:z.literal('save'),pointId:id.nullable(),expectedStateHash:digest,draft:neighborhoodDraft}).strict(),
  z.object({...base,...existing,operation:z.enum(['approve','reject']),versionId:id}).strict(),
  z.object({...base,...existing,operation:z.enum(['withdraw','archive','restore'])}).strict(),
  z.object({...base,operation:z.literal('cancel_unused'),inputHash:digest}).strict()
-])
+]).superRefine((value, ctx) => { if (value.operation === 'reject') requireDecisionNote(value, ctx) })
+
 export const neighborhoodQuery=z.object({propertyId:id,kind:z.enum(['points','point','versions','version','history','history_detail','decision']).default('points'),pointId:id.optional(),versionId:id.optional(),decisionId:id.optional(),offset:z.coerce.number().int().min(0).max(1000000).default(0),expectedHash:digest.optional()}).strict().refine(v=>['point','versions'].includes(v.kind)?!!v.pointId&&!v.versionId&&!v.decisionId:v.kind==='version'?!!v.pointId&&!!v.versionId&&!v.decisionId:['decision','history_detail'].includes(v.kind)?!!v.decisionId&&!v.pointId&&!v.versionId:!v.pointId&&!v.versionId&&!v.decisionId)
 export type NeighborhoodDraft=z.infer<typeof neighborhoodDraft>
 export type NeighborhoodCommand=z.infer<typeof neighborhoodCommand>

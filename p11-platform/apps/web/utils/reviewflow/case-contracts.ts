@@ -1,6 +1,7 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 const uuid=z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),priority=z.enum(['low','medium','high','urgent'])
-const common={propertyId:uuid,requestId:uuid,reviewId:uuid,sourceVersion:z.number().int().positive(),reason:z.string().trim().min(3).max(2000)}
+const common={propertyId:uuid,requestId:uuid,reviewId:uuid,sourceVersion:z.number().int().positive(),reason:decisionNote(2000, 3)}
 const existing={...common,caseId:uuid,expectedVersion:z.number().int().positive()}
 const fields={priority:priority.optional(),ownerId:uuid.nullable().optional()}
 export const caseDecisionSchema=z.discriminatedUnion('action',[

@@ -1,3 +1,4 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {createHash} from 'node:crypto'
 import sharp, {type Metadata} from 'sharp'
 import {z} from 'zod'
@@ -44,7 +45,7 @@ export async function uploadLibraryAsset(form:FormData,actorId:string,propertyId
  const inspected=await inspectAssetFile(file)
  const metadata={name:z.string().trim().min(1).max(255).parse(String(form.get('name')||file.name)),description:z.string().max(2000).parse(String(form.get('description')||'')),asset_type:inspected.asset_type,alt_text:z.string().max(1000).parse(String(form.get('altText')||'')),folder:z.string().trim().max(120).parse(String(form.get('folder')||'')),tags:[],rights_status:rightsStatus.parse(form.get('rightsStatus')||'unknown'),rights_metadata:{license:z.string().max(4000).parse(String(form.get('license')||''))},width:inspected.width,height:inspected.height}
  const replacesAssetId=form.get('replacesAssetId')?z.string().uuid().parse(form.get('replacesAssetId')):null
- const input={contentHash:inspected.contentHash,size:file.size,mimeType:file.type,extension:inspected.extension,metadata,...(replacesAssetId?{replacesAssetId,expectedRevision:z.coerce.number().int().positive().parse(form.get('expectedRevision')),reason:z.string().trim().min(3).max(2000).parse(form.get('reason'))}:{})}
+ const input={contentHash:inspected.contentHash,size:file.size,mimeType:file.type,extension:inspected.extension,metadata,...(replacesAssetId?{replacesAssetId,expectedRevision:z.coerce.number().int().positive().parse(form.get('expectedRevision')),reason:decisionNote().parse(form.get('reason') ?? undefined)}:{})}
  const args={p_id:requestId,p_property_id:propertyId,p_actor_id:actorId}
  const started=await assetLibraryRpc('begin_forgestudio_asset_upload',{...args,p_input:input})
  if(started.state!=='prepared')return started

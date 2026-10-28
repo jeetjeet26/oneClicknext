@@ -1,3 +1,4 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {agencyProducts,evidenceSchema,currentWork,type Evidence} from './contracts'
 export const planActions=['inspect_work','verify_receipt','review_inputs','prepare_followup'] as const
@@ -5,7 +6,7 @@ export const planActionLabels:Record<typeof planActions[number],string>={inspect
 export const planStates={draft:'Draft',reviewed:'Reviewed for human follow-up',withdrawn:'Withdrawn'} as const
 const id=z.string().uuid(),hash=z.string().regex(/^[a-f0-9]{64}$/)
 export const planDocument=z.object({goal:z.string().trim().min(3).max(1000),successMeasure:z.string().trim().min(3).max(1000),steps:z.array(z.object({action:z.enum(planActions),detail:z.string().trim().min(3).max(1200)}).strict()).min(1).max(8)}).strict()
-const save=z.object({operation:z.literal('save'),product:z.enum(agencyProducts),previousId:id.nullable(),sourceHash:hash,plan:planDocument,status:z.enum(['draft','reviewed','withdrawn']),reason:z.string().trim().min(3).max(2000)}).strict()
+const save=z.object({operation:z.literal('save'),product:z.enum(agencyProducts),previousId:id.nullable(),sourceHash:hash,plan:planDocument,status:z.enum(['draft','reviewed','withdrawn']),reason:decisionNote()}).strict()
 export const planCommand=z.discriminatedUnion('operation',[save.extend({propertyId:id,requestId:id}),z.object({propertyId:id,requestId:id,product:z.enum(agencyProducts),operation:z.literal('cancel_unused'),inputHash:hash}).strict()])
 export type PlanCommand=z.infer<typeof planCommand>
 export type PlanInput=z.infer<typeof save>&{propertyId:string}

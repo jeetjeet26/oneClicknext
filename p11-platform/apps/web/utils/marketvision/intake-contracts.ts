@@ -1,7 +1,8 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {PROPERTY_TYPE_VALUES} from '@/utils/property-types'
 import {marketId} from './decision-contracts'
-const reason=z.string().trim().min(3).max(2000)
+const reason=decisionNote(2000, 3)
 export const IntakeRead=z.object({propertyId:marketId,requestId:marketId.optional(),cursor:marketId.optional(),view:z.enum(['saved','legacy']).default('saved')}).strict().refine(v=>!v.requestId||!v.cursor)
 export const IntakeRequest=z.object({requestId:marketId,propertyId:marketId,rawText:z.string().min(20).max(100000).refine(s=>s.trim().length>=20),reason}).strict()
 export const intakeUrl=z.string().trim().max(2000).refine(s=>{try{const u=new URL(s);return ['http:','https:'].includes(u.protocol)&&!!u.hostname&&!u.username&&!u.password&&!/[<>\s]/.test(s)}catch{return false}},'Use a complete HTTP or HTTPS address').nullable()

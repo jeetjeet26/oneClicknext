@@ -1,4 +1,5 @@
 'use client';
+import {HistoryNote} from '@/components/ui/decision-note';
 import { useEffect, useRef, useState } from 'react';
 import type { AuditDecisionController, AuditReply } from '@/utils/propertyaudit/use-audit-decisions';
 export const auditButton = 'rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-40', auditField = 'mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm';
@@ -46,10 +47,18 @@ export function AuditPageButtons({ page, label = 'records' }: {
 }
 const names: Record<string, string> = { crawl_stop: 'Website crawl stopped', crawl_retry: 'Website crawl retry requested', query_create: 'Questions created', query_edit: 'Question edited', query_archive: 'Questions archived', query_restore: 'Questions restored inactive', finding_review: 'Finding reviewed', recommendation_review: 'Recommendation reviewed', run_request: 'Audit requested', run_stop: 'Audit stopped', run_retry: 'Linked retry requested', run_archive: 'Audit archived', run_restore: 'Audit restored', run_review: 'Audit evidence reviewed', cancel_request: 'Unused request cancelled' };
 const row = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-function FieldChanges({ before, after }: {
-    before: unknown;
-    after: unknown;
-}) { const a = row(before), b = row(after), fields: Record<string, string> = { text: 'Question', type: 'Type', geo: 'Location', weight: 'Weight', run_count: 'Repeats', is_active: 'Active', archived_at: 'Archived at', status: 'Reported status', owner: 'Responsible team', notes: 'Staff notes', title: 'Title', model_name: 'Model', surface: 'Surface', measurement_mode: 'Measurement source', stopped_by_operator: 'Stopped by an operator', review: 'Review', reason: 'Reason' }; const changes = Object.entries(fields).filter(([k]) => k in b && JSON.stringify(a[k]) !== JSON.stringify(b[k])); const show = (v: unknown) => v === null || v === undefined || v === '' ? 'Not recorded' : v === true ? 'Yes' : v === false ? 'No' : String(v).replaceAll('_', ' '); return <dl className="space-y-2">{changes.map(([k, label]) => <div key={k}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="whitespace-pre-wrap break-words">{k in a ? `${show(a[k])} → ` : ''}{show(b[k])}</dd></div>)}</dl>; }
-export function AuditDecisionHistory({ controller: c }: {
-    controller: AuditDecisionController;
-}) { const page = useAuditPage(c, 'history'); return <section aria-label="Audit decision history" className="space-y-4 rounded-xl border border-border bg-background p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">Audit decision history</h3><button className={auditButton} disabled={page.busy || !c.actor} onClick={() => void page.load()}>Refresh audit history</button></div>{page.error && <p role="alert" className="text-sm text-red-700">{page.error}</p>}{!page.data && !page.error && <p className="text-sm">Loading saved decisions…</p>}{page.data?.count === 0 && <p className="text-sm text-muted-foreground">No decisions are recorded under the current contract. Earlier measurements retain their original source.</p>}<ol className="space-y-3">{page.data?.items?.map(h => { const input = row(h.input), after = h.after_state, before = h.before_state, beforeRun = row(before).run; return <li key={String(h.id)} className="space-y-3 rounded-lg border border-border p-3 text-sm"><p className="break-words font-medium">{names[String(h.operation)] || 'Audit decision'} · {String(h.actorName)}</p><p className="text-xs text-muted-foreground">{new Date(String(h.created_at)).toLocaleString()}</p>{Boolean(input.reason) && <p className="whitespace-pre-wrap break-words">{String(input.reason)}</p>}{Array.isArray(after) ? <ol className="space-y-3">{after.map((value, i) => { const earlier = Array.isArray(before) ? before.find(v => row(v).id === row(value).id) : null; return <li key={String(row(value).id || i)}><FieldChanges before={earlier} after={value}/></li>; })}</ol> : after ? <FieldChanges before={beforeRun || before} after={after}/> : null}{h.operation === 'finding_review' || h.operation === 'recommendation_review' || h.operation === 'run_review' ? <p className="text-xs text-muted-foreground">Staff decision retained. A later measurement must establish any verified improvement.</p> : null}{Boolean(row(before).source) && <details><summary>Reviewed property source</summary><p className="mt-2">{String(row(row(row(before).source).property).name || 'Saved property context')} · question and configuration versions retained with this decision.</p></details>}{Boolean(beforeRun) && <details><summary>Reviewed measurement</summary><p className="mt-2">{String(row(beforeRun).surface)} · {String(row(beforeRun).model_name)} · {String(row(beforeRun).measurement_mode)} · {Array.isArray(row(before).answers) ? (row(before).answers as unknown[]).length : 0} retained answers.</p></details>}</li>; })}</ol><AuditPageButtons page={page} label="decisions"/></section>; }
+export function AuditDecisionHistory({ controller: c }: { controller: AuditDecisionController }) {
+ const page = useAuditPage(c, 'history');
+ return <section aria-label="Audit change history" className="space-y-4 rounded-xl border border-border bg-background p-4">
+  <div className="flex items-center justify-between gap-2"><h3 className="font-semibold">Change history</h3><button className={auditButton} disabled={page.busy || !c.actor} onClick={() => void page.load()}>Refresh</button></div>
+  {page.error && <p role="alert" className="text-sm text-red-700">{page.error}</p>}
+  {!page.data && !page.error && <p className="text-sm">Loading change history…</p>}
+  {page.data?.count === 0 && <p className="text-sm text-muted-foreground">No changes yet.</p>}
+  <ol className="divide-y">{page.data?.items?.map(h => <li key={String(h.id)} className="py-3 text-sm">
+   <p>{names[String(h.operation)] || 'Audit updated'} · {String(h.actorName)}</p>
+   <time dateTime={String(h.created_at)} className="text-xs text-muted-foreground">{new Date(String(h.created_at)).toLocaleString()}</time>
+   <HistoryNote value={row(h.input).reason}/>
+  </li>)}</ol>
+  <AuditPageButtons page={page} label="changes"/>
+ </section>;
+}

@@ -1,7 +1,8 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {PROPERTY_TYPE_VALUES} from '@/utils/property-types'
 export const marketId=z.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i)
-const version=z.number().int().positive(),reason=z.string().trim().min(3).max(2000)
+const version=z.number().int().positive(),reason=decisionNote(2000, 3)
 export function publicMarketUrl(value:string){try{const u=new URL(value);return ['http:','https:'].includes(u.protocol)&&!u.username&&!u.password&&(!u.port||['80','443'].includes(u.port))&&/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/i.test(u.hostname)&&!/(^|\.)(localhost|local|internal|test)$/i.test(u.hostname)}catch{return false}}
 const text=(max:number)=>z.string().trim().max(max).nullable()
 const url=z.string().trim().max(2000).refine(publicMarketUrl,'Use a public website URL without credentials').nullable()

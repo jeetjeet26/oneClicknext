@@ -1,10 +1,11 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {profileSchema,contactSchema,connectionRequestSchema,propertyIdSchema as id} from './contracts'
 import {creationProfile} from './creation-contracts'
 import type {OnboardingFormData,OnboardingStep} from '@/app/onboarding/types'
 const digest=z.string().regex(/^[a-f0-9]{64}$/)
 export const organizationDraft=z.object({organization:z.object({name:z.string().max(300),type:z.enum(['','pmc','owner_operator','developer','reit','other']),legalName:z.string().max(500)}).strict(),profile:profileSchema.extend({name:z.string().max(300)}),contacts:z.array(contactSchema.extend({name:z.string().max(500),email:z.string().max(500)})).max(100),connectionRequests:z.array(connectionRequestSchema).max(11),step:z.enum(['organization','community','contacts','integrations','knowledge','review'])}).strict()
-const base={requestId:id,reason:z.string().trim().min(3).max(2000)},revision=z.number().int().min(0).max(999999999)
+const base={requestId:id,reason:decisionNote(2000, 3)},revision=z.number().int().min(0).max(999999999)
 export const organizationCommand=z.discriminatedUnion('operation',[
  z.object({...base,operation:z.literal('save'),expectedRevision:revision,draft:organizationDraft}).strict(),
  z.object({...base,operation:z.literal('complete'),expectedRevision:revision,draftHash:digest,confirmed:z.literal(true)}).strict(),

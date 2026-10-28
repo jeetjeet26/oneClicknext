@@ -1,4 +1,5 @@
 "use client"
+import { DecisionNote } from '@/components/ui/decision-note'
 import {useEffect,useRef,useState} from 'react'
 import type {CalendarBindingCandidate} from '@/utils/services/calendar-binding-provider'
 type Page={events:CalendarBindingCandidate[];nextCursor:string|null;calendarId:string;credentialVersion:number;unsupported:number;timezone:string}
@@ -38,7 +39,7 @@ export function CalendarEventBinding({propertyId,bookingId,version,timezone,onUp
     {page.events.length>0?<label className="block text-sm text-slate-800">Matching calendar event<select value={selected} onChange={e=>setSelected(e.target.value)} className="mt-1 block w-full rounded border border-slate-300 bg-white p-2"><option value="">Choose an event</option>{page.events.map(event=><option key={event.id} value={event.id}>{event.title} · {new Intl.DateTimeFormat('en-US',{timeZone:page.timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(event.startDateTime!))}</option>)}</select></label>:<p className="text-sm text-slate-700">{page.nextCursor?'No matching event on this page. Check the next page.':'No matching event found. Confirm its time and duration in your calendar, then reload.'}</p>}
     {page.unsupported>0&&<p className="text-xs text-slate-600">Some events have unsupported or unavailable timing and cannot be linked here.</p>}
     {page.nextCursor&&<button type="button" onClick={()=>void submit('list',page.nextCursor!)} className="text-sm text-indigo-700 underline">Load more calendar events</button>}
-    {page.events.length>0&&<><label className="block text-sm text-slate-800">Reason for linking<input value={reason} onChange={e=>setReason(e.target.value)} maxLength={2000} className="mt-1 block w-full rounded border border-slate-300 bg-white p-2"/></label><button type="button" disabled={!selected||!reason.trim()||stale} onClick={()=>void submit('bind')} className="rounded bg-indigo-600 px-3 py-2 text-sm text-white disabled:opacity-50">Link selected event</button></>}
+    {page.events.length>0&&<><DecisionNote><label className="block text-sm text-slate-800">Note (optional)<input value={reason} onChange={e=>setReason(e.target.value)} maxLength={2000} className="mt-1 block w-full rounded border border-slate-300 bg-white p-2"/></label></DecisionNote><button type="button" disabled={(!selected || stale)} onClick={()=>void submit('bind')} className="rounded bg-indigo-600 px-3 py-2 text-sm text-white disabled:opacity-50">Link selected event</button></>}
    </>}
   </fieldset>
  </section>

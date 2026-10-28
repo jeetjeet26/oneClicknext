@@ -1,7 +1,8 @@
+import { decisionNote } from '@/utils/actions/decision-note'
 import {z} from 'zod'
 import {propertyIdSchema as id} from '@/utils/property-setup/contracts'
 import {digest,validText} from './material-contracts'
-const reason=z.string().trim().min(3).max(2000)
+const reason=decisionNote(2000, 3)
 const base={requestId:id,propertyId:id,fileId:id,expectedRevision:z.number().int().positive(),reason}
 export const fileUploadFields=z.object({requestId:id,propertyId:id,title:z.string().trim().min(1).max(300),materialId:id.nullable(),reason}).strict()
 export const fileCommand=z.discriminatedUnion('operation',[
