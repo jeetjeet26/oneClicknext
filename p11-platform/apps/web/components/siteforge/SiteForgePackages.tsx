@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { PackageProgress } from './PackageProgress'
 import { PackageDelivery } from './PackageDelivery'
+import { PackagePreview } from './PackagePreview'
 import { Download,Loader2,Sparkles } from 'lucide-react'
 import type { PackageSourceSummary,PackageSummary } from '@/utils/siteforge/packages/contracts'
 
@@ -15,6 +16,7 @@ export function SiteForgePackages({propertyId,packageId}:{propertyId:string;pack
   const router=useRouter()
   const [view,setView]=useState<View|null>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false)
   const [target,setTarget]=useState<'wordpress'|'standalone'>('wordpress'),[notes,setNotes]=useState('')
+  const [previewUrl,setPreviewUrl]=useState<string|null>(null)
   const request=useRef<{key:string;id:string}|null>(null)
   const load=useCallback(async(signal?:AbortSignal)=>{
     const response=await fetch(`/api/siteforge/packages?propertyId=${propertyId}${packageId?`&packageId=${packageId}`:''}`,{cache:'no-store',signal})
@@ -74,12 +76,11 @@ export function SiteForgePackages({propertyId,packageId}:{propertyId:string;pack
     {view ? <>
       {packageId&&!selected?<p role="alert" className="mt-6">This version is unavailable for this property. Return to all website versions to choose another.</p>:null}
       {selected?<div className="mt-6 space-y-4">
-        <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-5"><p className="text-sm text-indigo-700">{view.source.name}</p><h3 className="mt-1 text-lg font-semibold">{versionName(selected)}</h3><p role="status" className="mt-2 text-sm">{labels[selected.state]}</p><PackageProgress state={selected.state}/></div>
+        <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-5"><p className="text-sm text-indigo-700">{view.source.name}</p><h3 className="mt-1 text-lg font-semibold">{versionName(selected)}</h3><p role="status" className="mt-2 text-sm">{labels[selected.state]}</p>{selected.state!=='ready'?<PackageProgress state={selected.state}/>:null}</div>
         {selected.parent_id?<p className="text-sm text-gray-600">Revision of <Link href={versionUrl(selected.parent_id)} className="underline">an earlier version</Link>.</p>:null}
         {selected.error_message?<p role="alert" className="text-sm text-red-800">{selected.error_message}</p>:null}
         {selected.source_hash!==view.source.hash?<p className="text-sm text-amber-800">Saved property information has changed. Your next revision will include the current information.</p>:null}
         {selected.state==='ready'?<div className="flex flex-wrap gap-4 text-sm"><a href="#package-notes" className="rounded-lg bg-indigo-600 px-4 py-2 font-medium text-white">Request changes</a><a href={`/api/siteforge/packages?propertyId=${propertyId}&downloadId=${selected.id}`} download className="inline-flex items-center gap-2 rounded-lg border px-4 py-2"><Download className="h-4 w-4"/>Download package</a></div>:null}
-        {selected.state==='ready'&&selected.target==='wordpress'?<PackageDelivery propertyId={propertyId} jobId={selected.id}/>:null}
         <details className="rounded-lg border p-4 text-sm"><summary className="cursor-pointer font-medium">Request used for this version</summary><p className="mt-3 whitespace-pre-wrap text-gray-600">{selected.instructions}</p></details>
         {view.jobs.some(job=>job.parent_id===selected.id)?<div className="rounded-lg border p-4 text-sm"><p className="font-medium">Edits created from this version</p><ul className="mt-2 space-y-2">{view.jobs.filter(job=>job.parent_id===selected.id).map(job=><li key={job.id}><Link href={versionUrl(job.id)} className="text-indigo-700 underline">{versionName(job)}</Link><span className="ml-2">{labels[job.state]}</span></li>)}</ul></div>:null}
       </div>:null}
@@ -94,21 +95,27 @@ export function SiteForgePackages({propertyId,packageId}:{propertyId:string;pack
       </div>:null}
       {!packageId||parent?<>
 
+      <details className="mt-5 rounded-lg border p-4"><summary className="cursor-pointer text-sm font-medium">Property information for the next version</summary>
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">{[
         ['Property',view.source.name],['Brand',view.source.brand?'Approved brand':'Direction to be proposed'],['Floorplans',String(view.source.floorplans)],['Approved media',String(view.source.assets)],
       ].map(([label,value])=><div key={label} className="rounded-xl bg-stone-50 p-4"><p className="text-xs font-medium uppercase tracking-wide text-gray-500">{label}</p><p className="mt-1 text-sm font-medium text-gray-900">{value}</p></div>)}</div>
       <div className="mt-4 flex flex-wrap gap-4 text-sm"><Link href="/dashboard/community?section=facts" className="underline">Review community facts</Link><Link href="/dashboard/siteforge/direction" className="underline">Review website design direction</Link></div>
       {view.source.direction ? <p className="mt-3 text-sm text-gray-600">Design direction: {view.source.directionName??'Approved direction'} · {view.source.directionSource==='website'?'Approved website direction':'Reusable property design brief'}. This is the direction used for the next build.</p> : null}
       {view.source.warnings.length ? <details className="mt-4 rounded-lg border border-amber-200 p-3 text-sm text-amber-900"><summary className="cursor-pointer font-medium">Information to review ({view.source.warnings.length})</summary><ul className="mt-2 list-disc space-y-1 pl-5">{view.source.warnings.map((warning,i)=><li key={i}>{warning}</li>)}</ul></details> : null}
+      </details>
       {running?<p role="status" className="mt-4 rounded-lg bg-indigo-50 p-3 text-sm text-indigo-900">A website build is in progress. <Link href={versionUrl(running.id)} className="underline">View its progress</Link> before requesting another version.</p>:null}
-      <form onSubmit={generate} className="mt-6 space-y-4 rounded-xl border border-gray-200 p-5">
+      <div className={parent?'mt-6 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_380px]':'mt-6'}>
+      {parent?<PackagePreview url={previewUrl} isWordPress={parent.target==='wordpress'}/>:null}
+      <form onSubmit={generate} className="min-w-0 space-y-4 rounded-xl border border-gray-200 bg-white p-5 lg:sticky lg:top-24">
         <h3 className="text-lg font-semibold">{parent?'Request changes to this version':'Create a new website'}</h3>
-        {parent?<p className="text-sm leading-6 text-gray-600">Astra starts with this version’s saved website files and applies your feedback while preserving the rest of its design. This creates a separate version with current property information. Direct changes made in WordPress are not imported. Staging and the live site stay unchanged until you choose to install or deploy the new version.</p>:null}
+        {parent?<p className="text-sm leading-6 text-gray-600">Browse the preview, then describe the page and changes you want. Astra creates a new version from this package and keeps the rest of the design. Direct WordPress edits are not imported.</p>:null}
         {!parent?<div><label htmlFor="package-target" className="block text-sm font-medium text-gray-800">Website format</label><select id="package-target" value={target} disabled={busy||Boolean(running)} onChange={e=>setTarget(e.target.value as 'wordpress'|'standalone')} className="mt-1 w-full rounded-lg border border-gray-300 bg-white p-3 sm:max-w-sm"><option value="wordpress">WordPress — editable by your team</option><option value="standalone">Standalone website — ready to upload</option></select></div>:null}
-        <div><label htmlFor="package-notes" className="block text-sm font-medium text-gray-800">{parent?'What should change?':'What would you like to create?'}</label><textarea id="package-notes" value={notes} onChange={e=>setNotes(e.target.value)} required maxLength={8000} rows={4} disabled={busy||Boolean(running)} placeholder={parent?"Tell Astra which page to change, what to change, and what to keep. For example: On Community, shorten the introduction and add a neighborhood section. Keep the colors, fonts and other pages unchanged.":"Describe the style, pages and priorities. Saved property information is included automatically."} className="mt-1 w-full rounded-lg border border-gray-300 p-3 text-sm"/></div>
+        <div><label htmlFor="package-notes" className="block text-sm font-medium text-gray-800">{parent?'What should change?':'What would you like to create?'}</label><textarea id="package-notes" value={notes} onChange={e=>setNotes(e.target.value)} required maxLength={8000} rows={9} disabled={busy||Boolean(running)} placeholder={parent?"Tell Astra which page to change, what to change, and what to keep. For example: On Community, shorten the introduction and add a neighborhood section. Keep the colors, fonts and other pages unchanged.":"Describe the style, pages and priorities. Saved property information is included automatically."} className="mt-1 w-full rounded-lg border border-gray-300 p-3 text-sm"/></div>
         <div className="flex flex-wrap items-center gap-4"><button type="submit" disabled={busy||Boolean(running)||!view.configured||!notes.trim()} className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-5 py-3 text-sm font-medium text-white disabled:opacity-50">{busy?<Loader2 className="h-4 w-4 animate-spin"/>:<Sparkles className="h-4 w-4"/>}{parent?'Generate new version':'Generate website'}</button><p className="text-xs text-gray-500">Builds may take several minutes. You can leave this page and return.</p></div>
         {!view.configured?<p className="text-sm text-amber-800">Astra needs to be connected on this server before you can generate a website.</p>:null}
       </form>
+      </div>
+      {parent?.target==='wordpress'?<details className="mt-6 rounded-xl border p-4" open={!previewUrl}><summary className="cursor-pointer font-medium">Staging and publication</summary><PackageDelivery propertyId={propertyId} jobId={parent.id} onPreviewChange={setPreviewUrl}/></details>:null}
       </>:null}
 
     </>:null}

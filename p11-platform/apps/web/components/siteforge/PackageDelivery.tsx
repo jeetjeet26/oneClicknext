@@ -3,11 +3,13 @@ import {useEffect,useRef,useState} from 'react'
 type Target={id:string;websiteId:string;type:string;url:string}
 type Release={id:string;jobId:string;kind:'preview'|'approve'|'deploy';state:string;targetId:string;url:string;previewId:string|null;createdAt:string;message?:string;qualityVerified?:boolean}
 type View={targets:Target[];releases:Release[]}
-export function PackageDelivery({propertyId,jobId}:{propertyId:string;jobId:string}){
+export function PackageDelivery({propertyId,jobId,onPreviewChange}:{propertyId:string;jobId:string;onPreviewChange?:(url:string|null)=>void}){
  const [view,setView]=useState<View|null>(null),[error,setError]=useState(''),[target,setTarget]=useState(''),[confirmed,setConfirmed]=useState(false),[busy,setBusy]=useState(false),[refresh,setRefresh]=useState(0)
  const request=useRef<{key:string;id:string}|null>(null)
  useEffect(()=>{const c=new AbortController();let timer:ReturnType<typeof setTimeout>;async function load(){try{const r=await fetch(`/api/siteforge/packages/delivery?propertyId=${propertyId}`,{signal:c.signal,cache:'no-store'});const d=await r.json();if(!r.ok)throw Error(d.error);setView(d);if(d.releases.some((x:Release)=>x.jobId===jobId&&x.state==='running'))timer=setTimeout(load,5000)}catch(e){if(!c.signal.aborted)setError(e instanceof Error?e.message:'Delivery status unavailable.')}}void load();return()=>{c.abort();clearTimeout(timer)}},[propertyId,jobId,refresh])
  const history=view?.releases.filter(r=>r.jobId===jobId)??[],preview=history.find(r=>r.kind==='preview'&&r.state==='succeeded'&&r.qualityVerified),approval=history.find(r=>r.kind==='approve'&&r.state==='succeeded'&&r.previewId===preview?.id),deployed=history.find(r=>r.kind==='deploy'&&r.state==='succeeded'),unresolved=history.some(r=>r.state==='running'||r.state==='uncertain')
+ const previewUrl=preview?.url??null
+ useEffect(()=>{onPreviewChange?.(previewUrl)},[onPreviewChange,previewUrl])
  const legacyPreview=history.some(r=>r.kind==='preview'&&r.state==='succeeded'&&!r.qualityVerified)&&!preview
  const staging=view?.targets.filter(t=>t.type==='staging')??[],previewTarget=view?.targets.find(t=>t.id===preview?.targetId),production=view?.targets.filter(t=>t.type==='production'&&t.websiteId===previewTarget?.websiteId&&t.url!==previewTarget?.url)??[]
  async function act(kind:'preview'|'approve'|'deploy'){
