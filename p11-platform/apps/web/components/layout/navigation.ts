@@ -4,6 +4,7 @@ import {
   BedDouble,
   Bot,
   Building2,
+  ClipboardList,
   FileText,
   Flame,
   Globe,
@@ -23,6 +24,12 @@ export const navigationGroups = [
   {
     label: "Workspace",
     items: [
+      {
+        href: "/dashboard/properties/new",
+        label: "Onboarding",
+        icon: ClipboardList,
+        description: "Add a property and complete its setup",
+      },
       {
         href: "/dashboard",
         label: "Overview",

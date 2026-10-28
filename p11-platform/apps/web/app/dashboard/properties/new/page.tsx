@@ -39,9 +39,10 @@ function AddPropertyContent() {
               <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
                 <span className="text-white font-bold text-sm">P11</span>
               </div>
-              <span className="text-white font-semibold text-lg tracking-tight">Add Property</span>
+              <h1 className="text-white font-semibold text-lg tracking-tight">Onboarding</h1>
             </div>
           </div>
+          <p className="text-center text-sm text-slate-400 mb-6">Add a property, review its details and complete setup.</p>
           <StepIndicator currentStep={step} />
         </div>
       )}

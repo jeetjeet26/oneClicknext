@@ -1,0 +1,8 @@
+P11 UI & UX review — October 15, 2026
+
+Open index.html in a browser for the searchable gallery and detailed findings.
+Open p11-ui-ux-review-2026-10-15.pdf for the 14-page report.
+The screenshots folder contains 58 original captures.
+Internal views are live; client/public previews use current components and synthetic data.
+No product changes or deployment were made.
+This bundle contains internal workspace screenshots; keep it within the intended review audience.

@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { ReviewedRecordsWorkspace } from '@/components/intelligence/ReviewedRecordsWorkspace'
 import { CommunityBrainWorkspace } from '@/components/community-brain/CommunityBrainWorkspace'
@@ -22,7 +21,6 @@ import {
   Building2,
   BookOpen,
   ClipboardCheck,
-  Plus,
   RefreshCw,
   Loader2,
   AlertCircle
@@ -170,13 +168,6 @@ function PropertyDashboardPage() {
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             Refresh
           </button>
-          <Link
-            href="/dashboard/properties/new"
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
-          >
-            <Plus size={16} />
-            Add Property
-          </Link>
         </div>
       </div>
 
