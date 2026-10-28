@@ -27,6 +27,14 @@ describe('package API authorization',()=>{
     expect((await POST(post({action:'download',id,propertyId}))).status).toBe(404)
     expect(mocks.get).toHaveBeenCalledWith(id,propertyId)
   })
+  it('preserves the selected parent when requesting an edit instead of silently using the latest package',async()=>{
+    const parentId='55555555-5555-4555-8555-555555555555'
+    mocks.operator.mockResolvedValue({id:'actor',orgId:'allowed-org'})
+    mocks.save.mockResolvedValue({id,state:'queued'})
+    const response=await POST(post({action:'generate',requestId:id,propertyId,parentId,target:'wordpress',instructions:'Shorten the Community introduction. Keep other pages unchanged.'}))
+    expect(response.status).toBe(202)
+    expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({parentId,target:'wordpress',propertyId}),expect.objectContaining({id:'actor'}))
+  })
   it('rejects malformed requests without invoking any provider',async()=>{
     expect((await POST(post({action:'generate',propertyId,requestId:id,target:'codex',instructions:'Build'}))).status).toBe(400)
     expect(mocks.operator).not.toHaveBeenCalled();expect(mocks.process).not.toHaveBeenCalled()

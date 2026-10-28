@@ -4,7 +4,6 @@ import { Globe, Loader2 } from 'lucide-react'
 import { usePropertyContext } from '@/components/layout/PropertyContext'
 import { SiteForgeCodexBrief } from '@/components/siteforge/SiteForgeCodexBrief'
 import {SiteForgeDeliveryRecords}from '@/components/siteforge/SiteForgeDeliveryRecords'
-import ExistingConsoleWebsites from '@/components/siteforge/ExistingConsoleWebsites'
 import { SiteForgePackages } from '@/components/siteforge/SiteForgePackages'
 
 export default function SiteForgePage() {
@@ -32,7 +31,6 @@ export default function SiteForgePage() {
           <SiteForgeCodexBrief key={`brief-${currentProperty.id}`} property={currentProperty} />
           <SiteForgeDeliveryRecords key={`delivery-${currentProperty.id}`} propertyId={currentProperty.id}/>
           </div></details>
-          <ExistingConsoleWebsites key={`records-${currentProperty.id}`} property={currentProperty} />
         </>
       ) : (
         <p className="rounded-xl border border-gray-200 bg-white p-6 text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">Select a property to generate its website and review saved packages.</p>

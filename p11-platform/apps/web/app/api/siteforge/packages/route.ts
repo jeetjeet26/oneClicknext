@@ -8,7 +8,7 @@ import { processPackage } from '@/utils/siteforge/packages/runner'
 export const maxDuration=300
 const reply=(data:unknown,status=200)=>NextResponse.json(data,{status,headers:{'Cache-Control':'private, no-store'}})
 const failure=(error:unknown)=>reply({error:error instanceof PackageError?error.message:'The website build could not be confirmed. Refresh to check saved progress.'},error instanceof PackageError?error.status:503)
-const scope=z.object({propertyId:z.guid(),downloadId:z.uuid().optional()})
+const scope=z.object({propertyId:z.guid(),downloadId:z.uuid().optional(),packageId:z.uuid().optional()})
 async function downloadPackage(id:string,propertyId:string,actor:{id:string;orgId:string}) {
   const db=packageDb()
   const job=await getPackageJob(id,propertyId)
@@ -33,6 +33,11 @@ export async function GET(request:NextRequest) {
       loadPackageSource(propertyId),
       packageDb().from('siteforge_package_jobs').select('id,target,instructions,state,parent_id,created_at,error_message,source_hash,package_bytes').eq('property_id',propertyId).order('created_at',{ascending:false}).limit(30),
     ])
+    if(parsed.data.packageId&&!history.data?.some(job=>job.id===parsed.data.packageId)) {
+      const selected=await packageDb().from('siteforge_package_jobs').select('id,target,instructions,state,parent_id,created_at,error_message,source_hash,package_bytes').eq('property_id',propertyId).eq('id',parsed.data.packageId).maybeSingle()
+      if(selected.error) throw new PackageError('This website version could not be loaded.')
+      if(selected.data) history.data=[...(history.data??[]),selected.data]
+    }
     if(history.error) throw new PackageError('Website package history is unavailable. The local database migration may still be pending.')
     return reply({jobs:history.data,configured:Boolean(process.env.OPENAI_API_KEY),source:{name:snapshot.source.property.name,hash:snapshot.hash,floorplans:snapshot.source.floorplans.length,assets:snapshot.source.assets.length,brand:Boolean(snapshot.source.brand),direction:Boolean(snapshot.source.direction),directionName:snapshot.source.direction?.name??null,directionSource:snapshot.source.direction?.source??null,warnings:snapshot.source.warnings}})
   }catch(error){return failure(error)}

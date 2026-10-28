@@ -10,12 +10,13 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 import SiteForgePage from './page'
 
 describe('SiteForge entry flow', () => {
-  it('prepares a client handoff and retains access to earlier console records', () => {
+  it('keeps the new website workflow primary and removes old console cards', () => {
     state.property.loading = false
     const html = renderToStaticMarkup(React.createElement(SiteForgePage))
     expect(html).toContain('Copy brief for Codex')
     expect(html).toContain('Example Community')
-    expect(html).toContain('Earlier console projects')
+    expect(html).not.toContain('Earlier console projects')
+    expect(html).toContain('Your property websites')
     expect(html).not.toContain('Start New Website')
     expect(html).not.toContain('just 3 minutes')
   })
