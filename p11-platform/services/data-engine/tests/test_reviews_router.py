@@ -274,3 +274,19 @@ def test_stable_google_review_ids_are_deterministic():
     assert first is not None and second is not None
     assert first.platform_review_id == second.platform_review_id
     assert first.platform_review_id.startswith("google-placeX-")
+
+
+def test_full_google_preserves_limited_view_explanation(client):
+    from unittest.mock import AsyncMock
+    note = 'Google requires sign-in to show all reviews. Only 5 publicly visible reviews were collected; this is not a full import.'
+    scraper = MagicMock()
+    scraper.scrape_reviews_async = AsyncMock(return_value={
+        'success': True, 'reviews': [_google_review_dict()], 'note': note,
+    })
+    with patch('scrapers.google_places.PLAYWRIGHT_AVAILABLE', True), patch(
+        'scrapers.google_places.GoogleMapsReviewScraper', return_value=scraper
+    ):
+        response = client.post('/scraper/google-reviews/full', json={'place_id': 'place123'})
+    assert response.status_code == 200
+    assert response.json()['note'] == note
+    assert response.json()['completeness'] == 'degraded'

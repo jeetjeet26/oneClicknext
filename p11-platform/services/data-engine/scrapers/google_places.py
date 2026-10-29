@@ -763,6 +763,7 @@ class GoogleMapsReviewScraper:
         
         reviews = []
         place_name = None
+        limited_view = False
         
         logger.info(f"[Playwright] Scraping Google Maps reviews for place: {place_id}")
         
@@ -893,6 +894,7 @@ class GoogleMapsReviewScraper:
                     
                     logger.info(f"[Playwright] Collected {len(reviews)} reviews so far...")
                 
+                limited_view = page.get_by_text("You're seeing a limited view of Google Maps.", exact=True).count() > 0
                 browser.close()
                 
         except PlaywrightTimeout as e:
@@ -907,7 +909,7 @@ class GoogleMapsReviewScraper:
             'reviews': reviews,
             'reviews_fetched': len(reviews),
             'method': 'playwright_scraper',
-            'note': f'Scraped {len(reviews)} reviews via Google Maps web interface'
+            'note': (f'Google requires sign-in to show all reviews. Only {len(reviews)} publicly visible reviews were collected; this is not a full import.' if limited_view else f'Scraped {len(reviews)} reviews via Google Maps. Coverage is unverified and exact review dates are unavailable.')
         }
     
     def _extract_review_data_sync(self, review_el, place_id: str) -> Optional[Dict[str, Any]]:

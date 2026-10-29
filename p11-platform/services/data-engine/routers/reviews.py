@@ -138,9 +138,9 @@ async def google_reviews_full(
                 reviews=[_to_observed(raw) for raw in result.get("reviews", [])],
                 retrieval_method="scraper",
                 completeness="degraded",
-                note=(
-                    "Scraped via Google Maps web interface; review dates are approximate "
-                    "(relative timestamps) and coverage depends on page rendering."
+                note=result.get("note") or (
+                    "Scraped via Google Maps; exact review dates are unavailable "
+                    "and coverage depends on page rendering."
                 ),
             )
         logger.warning(
