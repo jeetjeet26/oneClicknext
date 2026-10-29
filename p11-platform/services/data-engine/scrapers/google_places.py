@@ -935,15 +935,15 @@ class GoogleMapsReviewScraper:
                         rating = int(match.group(1))
             
             # Get review text
-            text_el = review_el.query_selector('.wiI7pd, span.wiI7pd')
+            text_el = review_el.query_selector('.MyEned .wiI7pd')
             review_text = text_el.inner_text() if text_el else ''
             
             # Expand "More" if present
             try:
-                more_btn = review_el.query_selector('button.w8nwRe')
+                more_btn = review_el.query_selector(' .MyEned button.w8nwRe[aria-expanded="false"]')
                 if more_btn:
                     more_btn.click()
-                    text_el = review_el.query_selector('.wiI7pd, span.wiI7pd')
+                    text_el = review_el.query_selector('.MyEned .wiI7pd')
                     review_text = text_el.inner_text() if text_el else review_text
             except:
                 pass
