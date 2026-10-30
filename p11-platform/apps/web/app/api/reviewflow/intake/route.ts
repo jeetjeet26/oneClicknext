@@ -5,6 +5,7 @@ import {ReviewStoreError} from '@/utils/reviewflow/analysis-store'
 import {intakeWriteSchema,intakeReadSchema} from '@/utils/reviewflow/intake-contracts'
 import {requestIntake,recoverIntake,runSavedIntake,intakeRpc} from '@/utils/reviewflow/intake-store'
 import type {IntakeRow} from '@/utils/reviewflow/intake-parser'
+export const maxDuration=300
 const paused=()=>process.env.OUTBOUND_DELIVERY_PAUSED==='true'
 function dispatch(id:string){after(async()=>{try{await runSavedIntake(id)}catch{console.error('Saved review import needs result recovery.',{requestId:id})}})}
 export async function GET(request:NextRequest){try{

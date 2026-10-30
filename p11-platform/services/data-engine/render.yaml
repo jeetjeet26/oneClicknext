@@ -1,16 +1,21 @@
 services:
   # Main FastAPI Web Service
   - type: web
-    name: p11-data-engine
+    name: oneClick
     runtime: python
-    region: oregon
-    plan: starter
+    rootDir: p11-platform/services/data-engine
+    autoDeployTrigger: "off"
+    region: virginia
+    plan: standard
     # playwright install is required for browser-based scraping (bot-protected sites)
     buildCommand: pip install --require-hashes -r requirements.txt && playwright install chromium
-    # 1 worker: the 512MB starter instance OOMs with 2 workers once Chromium launches
+    # Keep a single application worker and reserve memory for Chromium.
     startCommand: gunicorn main:app --workers 1 --timeout 1800 --graceful-timeout 60 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
     
     envVars:
+      # Bundle Chromium with the installed package so it survives deployment.
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: "0"
       # Supabase
       - key: SUPABASE_URL
         sync: false
@@ -59,7 +64,7 @@ services:
   - type: worker
     name: p11-community-brain-worker
     runtime: docker
-    region: oregon
+    region: virginia
     plan: 1c-2g
     rootDir: p11-platform/services/data-engine
     dockerfilePath: ./Dockerfile.community-brain

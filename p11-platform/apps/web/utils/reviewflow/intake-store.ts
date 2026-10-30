@@ -1,3 +1,4 @@
+import {matchSavedGoogleReviews,type SavedReviewIdentity} from './intake-matching'
 import {createServiceClient} from '@/utils/supabase/admin'
 import {reviewRpc,ReviewStoreError} from './analysis-store'
 import {parseSavedManualIntake,parseSavedProviderIntake,INTAKE_MAX_BYTES} from './intake-parser'
@@ -18,7 +19,13 @@ export async function recoverIntake(id:string,propertyId:string){
  const {data:run,error}=await createServiceClient().from('reviewflow_intake_requests').select('*').eq('id',id).eq('property_id',propertyId).maybeSingle();if(error)throw new ReviewStoreError('Saved source result could not be loaded.');if(!run)throw new ReviewStoreError('Saved import unavailable.',404)
  if(run.state!=='result_ready')return{state:run.state,requestId:run.id}
  let normalized:ReturnType<typeof parseSavedManualIntake>|null=null,parseError:string|null=null
- try{const receipt=run.raw_result as unknown as IntakeReceipt;normalized=run.kind==='source'?parseSavedProviderIntake(run.fetch_input as unknown as SavedIntakeFetch,receipt):parseSavedManualIntake(run.kind as 'manual'|'csv',receipt.content||'')}catch(e){parseError=e instanceof Error?e.message:'The source does not match its saved contract.'}
+ try{const receipt=run.raw_result as unknown as IntakeReceipt;normalized=run.kind==='source'?parseSavedProviderIntake(run.fetch_input as unknown as SavedIntakeFetch,receipt):parseSavedManualIntake(run.kind as 'manual'|'csv',receipt.content||'')
+ if(run.kind==='source'&&(run.fetch_input as unknown as SavedIntakeFetch).platform==='google'){
+  const saved:SavedReviewIdentity[]=[]
+  for(let offset=0;;offset+=1000){const page=await createServiceClient().from('reviews').select('platform,platform_review_id,reviewer_name,review_text,rating,review_date,reviewer_avatar_url').eq('property_id',propertyId).eq('platform','google').order('id').range(offset,offset+999);if(page.error)throw new Error('Existing reviews could not be checked for duplicates.');saved.push(...page.data);if(page.data.length<1000)break}
+  normalized.reviews=matchSavedGoogleReviews(normalized.reviews,saved)
+ }
+ }catch(e){parseError=e instanceof Error?e.message:'The source does not match its saved contract.'}
  return intakeRpc('preview_reviewflow_intake',{p_id:id,p_result_hash:run.result_hash,p_normalized:normalized,p_error:parseError})
 }
 export async function runSavedIntake(id:string){

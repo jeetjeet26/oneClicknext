@@ -1,3 +1,4 @@
+import {isDeepStrictEqual} from 'node:util'
 import {getDataEngineUrl,getDataEngineHeaders} from '@/utils/services/runtime-config'
 import {INTAKE_CONTRACT_VERSION,INTAKE_MAX_BYTES} from './intake-parser'
 export type SavedIntakeFetch={contractVersion:string;platform:'google'|'yelp';providerId:string;method:'api'|'scraper';url:string;body:Record<string,string|number>}
@@ -12,10 +13,10 @@ export async function executeSavedIntakeFetch(input:SavedIntakeFetch,requestId:s
  const at=()=>new Date().toISOString(),blocked=(errorCode:string):IntakeReceipt=>({status:'blocked',errorCode,receivedAt:at()})
  if(process.env.OUTBOUND_DELIVERY_PAUSED==='true')return blocked('execution_paused')
  let current:SavedIntakeFetch;try{current=prepareIntakeFetch(input)}catch{return blocked('service_configuration_changed')}
- if(JSON.stringify(current)!==JSON.stringify(input))return blocked('service_configuration_changed')
+ if(!isDeepStrictEqual(current,input))return blocked('service_configuration_changed')
  const headers=getDataEngineHeaders();if(!headers['X-API-Key'])return blocked('service_credentials_missing')
  try{
-  const res=await fetch(input.url,{method:'POST',headers:{...headers,'x-request-id':requestId},body:JSON.stringify(input.body),signal:AbortSignal.timeout(45000),redirect:'error',cache:'no-store'})
+  const res=await fetch(input.url,{method:'POST',headers:{...headers,Authorization:`Bearer ${headers['X-API-Key']}`,'x-request-id':requestId},body:JSON.stringify(input.body),signal:AbortSignal.timeout(input.method==='scraper'?240000:45000),redirect:'error',cache:'no-store'})
   const reader=res.body?.getReader();let size=0;const chunks:Uint8Array[]=[]
   if(reader){try{for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>INTAKE_MAX_BYTES){await reader.cancel();return{status:'uncertain',errorCode:'receipt_too_large',receivedAt:at()}}chunks.push(value)}}finally{reader.releaseLock()}}
   const content=Buffer.concat(chunks).toString('utf8');return{status:'received',httpStatus:res.status,content,receivedAt:at()}

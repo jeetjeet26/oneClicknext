@@ -763,6 +763,7 @@ class GoogleMapsReviewScraper:
         
         reviews = []
         place_name = None
+        limited_view = False
         
         logger.info(f"[Playwright] Scraping Google Maps reviews for place: {place_id}")
         
@@ -850,7 +851,7 @@ class GoogleMapsReviewScraper:
                 
                 while len(reviews) < max_reviews and no_new_reviews_count < 5:
                     # Get all review elements - try multiple selectors
-                    review_elements = page.query_selector_all('[data-review-id], div.jftiEf, div.jJc9Ad')
+                    review_elements = page.query_selector_all('div.jftiEf[data-review-id]')
                     logger.info(f"[Playwright] Found {len(review_elements)} review elements on page")
                     
                     for review_el in review_elements:
@@ -872,6 +873,17 @@ class GoogleMapsReviewScraper:
                         no_new_reviews_count = 0
                     last_count = len(reviews)
                     
+                    # Scroll the actual ancestor of the review cards. Maps has
+                    # several panels with identical CSS classes.
+                    if review_elements:
+                        handle = review_elements[0].evaluate_handle("""el => {
+                            for (let p = el.parentElement; p; p = p.parentElement) {
+                                if (/(auto|scroll)/.test(getComputedStyle(p).overflowY)
+                                    && p.scrollHeight > p.clientHeight) return p;
+                            }
+                            return null;
+                        }""")
+                        scroll_container = handle.as_element()
                     # Scroll down
                     if scroll_container:
                         scroll_container.evaluate('el => el.scrollTop = el.scrollHeight')
@@ -882,6 +894,7 @@ class GoogleMapsReviewScraper:
                     
                     logger.info(f"[Playwright] Collected {len(reviews)} reviews so far...")
                 
+                limited_view = page.get_by_text("You're seeing a limited view of Google Maps.", exact=True).count() > 0
                 browser.close()
                 
         except PlaywrightTimeout as e:
@@ -896,7 +909,7 @@ class GoogleMapsReviewScraper:
             'reviews': reviews,
             'reviews_fetched': len(reviews),
             'method': 'playwright_scraper',
-            'note': f'Scraped {len(reviews)} reviews via Google Maps web interface'
+            'note': (f'Google requires sign-in to show all reviews. Only {len(reviews)} publicly visible reviews were collected; this is not a full import.' if limited_view else f'Scraped {len(reviews)} reviews via Google Maps. Coverage is unverified and exact review dates are unavailable.')
         }
     
     def _extract_review_data_sync(self, review_el, place_id: str) -> Optional[Dict[str, Any]]:
@@ -924,16 +937,15 @@ class GoogleMapsReviewScraper:
                         rating = int(match.group(1))
             
             # Get review text
-            text_el = review_el.query_selector('.wiI7pd, span.wiI7pd')
+            text_el = review_el.query_selector('.MyEned .wiI7pd')
             review_text = text_el.inner_text() if text_el else ''
             
             # Expand "More" if present
             try:
-                more_btn = review_el.query_selector('button.w8nwRe')
+                more_btn = review_el.query_selector(' .MyEned button.w8nwRe[aria-expanded="false"]')
                 if more_btn:
                     more_btn.click()
-                    review_el.page.wait_for_timeout(300)
-                    text_el = review_el.query_selector('.wiI7pd, span.wiI7pd')
+                    text_el = review_el.query_selector('.MyEned .wiI7pd')
                     review_text = text_el.inner_text() if text_el else review_text
             except:
                 pass
@@ -953,7 +965,7 @@ class GoogleMapsReviewScraper:
                 'reviewer_avatar_url': avatar_url,
                 'rating': rating,
                 'review_text': review_text,
-                'review_date': datetime.utcnow().isoformat(),
+                'review_date': None,  # Maps exposes relative time, not an exact publication date.
                 'relative_time': relative_time,
                 'platform': 'google'
             }
