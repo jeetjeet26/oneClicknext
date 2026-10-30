@@ -58,6 +58,7 @@ def inspect_configuration(saved, adapter_factory):
     suggestions = []
     for m in mappings:
         if (m.tourspark_field not in source_names or m.crm_field not in target_names
+                or m.crm_field.lower() in {"id", "external_id", "project_id", "client_id"}
                 or m.tourspark_field in seen_sources or m.crm_field in seen_targets
                 or type(m.confidence) is not int or not 50 <= m.confidence <= 100):
             continue

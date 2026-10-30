@@ -27,8 +27,10 @@ class CRMSetupTests(unittest.TestCase):
         answer.success=True
         answer.mappings=[FieldMapping('email','email',94,'Email match',[]),
             FieldMapping('phone','Invented',99,'Invalid',[]),
+            FieldMapping('property_name','project_id',60,'Wrong identifier',[]),
             FieldMapping('notes','email',90,'Duplicate',[]),
             FieldMapping('secret','email',90,'Invalid source',[])]
+        self.adapter.get_schema.return_value.fields.append(CRMField('project_id','Project ID',FieldType.STRING))
         result=inspect_configuration(self.saved,self.factory)
         self.assertEqual(len(result['suggestions']),1)
         self.assertEqual(result['suggestions'][0]['basis'],'ai')
