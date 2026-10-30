@@ -1,11 +1,21 @@
-"use client"
-import{useState}from'react'
-import Link from'next/link'
-import{AccountSettingsWorkbench}from'@/components/settings/AccountSettingsWorkbench'
-import{ScheduledReportsList}from'@/components/settings/ScheduledReportsList'
-import{AdAccountConnections}from'@/components/settings/AdAccountConnections'
-import{usePropertyContext}from'@/components/layout/PropertyContext'
-type Panel='organization'|'personal'|'notifications'|'reports'|'integrations'
-export default function SettingsPage(){const[panel,setPanel]=useState<Panel>('organization'),{currentProperty}=usePropertyContext();return<div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6"><h1 className="text-2xl font-semibold text-foreground">Settings</h1><nav aria-label="Settings sections" className="flex flex-wrap gap-2">{([['organization','Organization'],['personal','Your account'],['notifications','Notifications'],['reports','Scheduled reports'],['integrations','Connections']]as const).map(([id,label])=><button key={id} className={`rounded-lg border border-border px-4 py-2 text-sm ${panel===id?'bg-primary text-primary-foreground':'bg-card text-card-foreground'}`} aria-current={panel===id?'page':undefined} onClick={()=>setPanel(id)}>{label}</button>)}</nav>
- {panel==='organization'||panel==='personal'?<AccountSettingsWorkbench key={panel} section={panel}/>:panel==='notifications'?<section className="space-y-4 rounded-xl border border-border bg-card p-5 text-card-foreground"><h2 className="text-xl font-semibold">Notification and delivery controls</h2><p>Alerts and messages are configured in the product that owns the work. Account preferences do not activate an email schedule or send a notification.</p><div className="flex flex-wrap gap-4"><Link href="/dashboard/lumaleasing" className="underline">Leasing messages and handoffs</Link><Link href="/dashboard/settings/workflows" className="underline">Follow-up workflows</Link><Link href="/dashboard/settings/crm" className="underline">CRM delivery</Link><button className="underline" onClick={()=>setPanel('reports')}>Scheduled reports</button></div></section>:currentProperty.id?<section key={currentProperty.id+panel} className="rounded-xl border border-border bg-card p-5 text-card-foreground">{panel==='reports'?<ScheduledReportsList/>:<><div className="mb-5 flex flex-wrap gap-4"><Link href="/dashboard/settings/crm" className="underline">CRM setup and delivery</Link><Link href="/dashboard/integrations" className="underline">Reviewed integrations</Link></div><AdAccountConnections/></>}</section>:<section className="space-y-3 rounded-xl border border-border bg-card p-5 text-card-foreground"><h2 className="text-xl font-semibold">Select a property</h2><p>Choose or add a property to review its reports and connections.</p><Link className="underline" href="/dashboard/properties">Manage properties</Link></section>}
- </div>}
+'use client'
+
+import { useState } from 'react'
+import Link from 'next/link'
+import { AccountSettingsWorkbench } from '@/components/settings/AccountSettingsWorkbench'
+
+export default function SettingsPage() {
+  const [panel, setPanel] = useState<'organization' | 'personal'>('organization')
+  return (
+    <div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
+      <h1 className="text-2xl font-semibold text-foreground">Settings</h1>
+      <p className="text-muted-foreground">Manage your organization and personal account. Community settings are managed in <Link className="underline" href="/dashboard/community?section=overview">Property Overview</Link>.</p>
+      <nav aria-label="Settings sections" className="flex flex-wrap gap-2">
+        {([['organization', 'Organization'], ['personal', 'Your account']] as const).map(([id, label]) => (
+          <button key={id} className={`rounded-lg border border-border px-4 py-2 text-sm ${panel === id ? 'bg-primary text-primary-foreground' : 'bg-card text-card-foreground'}`} aria-current={panel === id ? 'page' : undefined} onClick={() => setPanel(id)}>{label}</button>
+        ))}
+      </nav>
+      <AccountSettingsWorkbench key={panel} section={panel} />
+    </div>
+  )
+}

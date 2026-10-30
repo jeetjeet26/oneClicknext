@@ -14,6 +14,7 @@ import {
   PropertyUnitsCard,
   ChatbotContextStatusCard
 } from '@/components/community'
+import { PropertyControls } from '@/components/community/PropertyControls'
 import { BrandIdentitySection } from '@/components/community/BrandIdentitySection'
 import { SiteForgeReadinessCard } from '@/components/community/SiteForgeReadinessCard'
 import { OnboardingTruthEditor } from '@/components/community/OnboardingTruthEditor'
@@ -154,7 +155,7 @@ function PropertyDashboardPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Community knowledge</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Property Overview</h1>
           <p className="text-slate-500 mt-1">
             {currentProperty.name} · Property information, sources and approved knowledge
           </p>
@@ -218,6 +219,7 @@ function PropertyDashboardPage() {
               <div className="workspace-steps">
                 {[['facts', 'Community facts', 'Review the information used in content and conversations.'], ['knowledge', 'Sources to review', 'Check websites, documents and written knowledge.'], ['files', 'Files and assets', 'Manage original files, images and approved assets.']].map(([id, title, description]) => <button type="button" key={id} onClick={() => setActiveTab(id as Tab)} className="console-panel p-5 text-left hover:border-orange-300"><h2 className="text-lg font-semibold">{title}</h2><p className="mt-2 text-sm text-slate-600">{description}</p><span className="mt-4 block text-sm font-medium text-[#a53212]">Open →</span></button>)}
               </div>
+              <PropertyControls key={currentProperty.id} propertyId={currentProperty.id} />
               {/* Property Profile Card */}
               <PropertyProfileCard
                 profile={profile}
@@ -290,6 +292,7 @@ function PropertyDashboardPage() {
           {/* Onboarding Checklist Tab */}
           {activeTab === 'checklist' && (
             <div className="space-y-6">
+              <PropertyControls key={currentProperty.id} propertyId={currentProperty.id} />
               <OnboardingTruthEditor propertyId={currentProperty?.id || ''} />
               <SiteForgeReadinessCard propertyId={currentProperty?.id || ''} />
               <OnboardingChecklist
