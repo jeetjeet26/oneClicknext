@@ -15,6 +15,7 @@ def test_mixed_dns_never_opens_a_socket(monkeypatch):
 class Socket:
     connected=[]
     def __init__(self,*args): pass
+    def fileno(self): return 1
     def settimeout(self,*args): pass
     def connect(self,target): self.connected.append(target)
     def close(self): pass
@@ -71,3 +72,31 @@ def test_credentialed_read_pins_host_and_never_follows_redirect(pinned,monkeypat
     assert len(Socket.connected)==1
     assert request.call_args.kwargs['headers']['Authorization']=='secret'
     tls.wrap_socket.assert_called_once()
+
+
+def test_connection_close_at_body_eof_keeps_successful_response(pinned, monkeypatch):
+    """HTTPResponse can close the original socket after the last body chunk."""
+    class ClosingSocket(Socket):
+        def __init__(self, *args): self.closed = False
+        def fileno(self): return -1 if self.closed else 1
+        def settimeout(self, *args):
+            if self.closed: raise OSError(9, 'Bad file descriptor')
+        def close(self): self.closed = True
+    sock = ClosingSocket()
+    class ClosingResponse(Response):
+        def read1(self, n):
+            chunk = super().read1(n)
+            if not self.body: sock.close()
+            return chunk
+    monkeypatch.setattr(h.socket, 'socket', lambda *args: sock)
+    Connection.responses = [ClosingResponse(body=b'{"questions":[]}')]
+    assert h.public_request('http://example.com').json() == {'questions': []}
+
+
+def test_closed_socket_does_not_skip_response_size_limit(pinned, monkeypatch):
+    class ClosedSocket(Socket):
+        def fileno(self): return -1
+    monkeypatch.setattr(h.socket, 'socket', ClosedSocket)
+    Connection.responses = [Response(body=b'x' * 100)]
+    with pytest.raises(httpx.RequestError, match='byte limit'):
+        h.public_request('http://example.com', max_bytes=20)

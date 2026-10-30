@@ -85,7 +85,10 @@ def public_request(url, *, method='GET', headers=None, timeout=15, max_bytes=2_0
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise httpx.TimeoutException('Website request timed out')
-                sock.settimeout(remaining)
+                # HTTPResponse may close the socket after the final body chunk.
+                # Drain its EOF without touching that closed descriptor.
+                if sock.fileno() != -1:
+                    sock.settimeout(remaining)
                 chunk = response.read1(min(65536, max_bytes-total+1))
                 if not chunk:
                     break
