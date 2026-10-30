@@ -70,6 +70,15 @@ class CRMSetupTests(unittest.TestCase):
         result=inspect_configuration(self.saved,self.factory)
         self.assertEqual(result['status'],'limited')
         self.assertEqual(result['schema']['evidenceSource'],'fallback')
+    def test_live_schema_confirms_public_registration_provider_read(self):
+        self.adapter.test_connection.return_value=ConnectionResult(True,api_version='public-registration',evidence_source='local_structure')
+        self.adapter.get_schema.return_value.evidence_source='provider_plus_defaults'
+        result=inspect_configuration(self.saved,self.factory)
+        self.assertEqual(result['connection']['evidenceSource'],'provider_response')
+        self.assertEqual(result['schema']['evidenceSource'],'provider_plus_defaults')
+        self.assertEqual(result['status'],'limited')
+        self.adapter.create_lead.assert_not_called()
+
     def test_public_registration_local_structure_is_not_provider_connection(self):
         self.saved['kind']='connection'
         self.adapter.test_connection.return_value=ConnectionResult(True,api_version='public-registration',evidence_source='local_structure')

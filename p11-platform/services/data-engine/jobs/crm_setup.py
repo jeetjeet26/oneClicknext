@@ -36,6 +36,10 @@ def inspect_configuration(saved, adapter_factory):
     fields = [{"name":f.name,"label":str(f.label)[:200],"type":str(getattr(f.type,"value",f.type)),"required":bool(f.required)}
         for f in schema.fields if FIELD.fullmatch(str(f.name))][:500]
     source = getattr(schema,"evidence_source","unverified")
+    if source in {"provider_response", "provider_plus_defaults"}:
+        # A successful schema read confirms provider access even when the initial
+        # public-registration check could only inspect the credential format.
+        result["connection"]["evidenceSource"] = "provider_response"
     result["schema"] = {"objectName":str(schema.object_name)[:128],"evidenceSource":source,"fields":fields,"truncated":len(fields)!=len(schema.fields)}
     if source != "provider_response" or len(fields)!=len(schema.fields):
         result["status"] = "limited"
