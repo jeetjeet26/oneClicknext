@@ -4,6 +4,9 @@ from connectors.crm_adapters.base import ConnectionResult, CRMSchema, CRMField, 
 from jobs.crm_setup import run_setup_operation, inspect_configuration
 class CRMSetupTests(unittest.TestCase):
     def setUp(self):
+        self.ai=patch('jobs.crm_setup.CRMSchemaAgent').start()
+        self.addCleanup(patch.stopall)
+        self.ai.return_value.discover_and_map.return_value.success=False
         self.saved={"state":"claimed","claimId":"claim","kind":"schema","platform":"lasso","credentials":{"api_key":"private"},"mapping":{"email":"OldEmail"}}
         self.adapter=Mock()
         self.adapter.test_connection.return_value=ConnectionResult(True, api_version="v1")
@@ -12,11 +15,54 @@ class CRMSetupTests(unittest.TestCase):
     def test_actual_schema_retains_required_fields_and_manual_suggestion_basis(self):
         result=inspect_configuration(self.saved,self.factory)
         self.assertEqual(result['status'],'checked')
-        self.assertEqual(result['suggestions'],[{'source':'email','target':'email','basis':'known_field_names'}])
+        self.assertEqual(result['suggestions'][0]['basis'],'known_field_names')
+        self.assertEqual(result['suggestions'][0]['target'],'email')
         self.assertEqual(result['mappingIssues']['unknownTargets'],['OldEmail'])
         self.assertEqual(result['mappingIssues']['unmappedRequired'],['email'])
         self.adapter.create_lead.assert_not_called()
         self.adapter.delete_lead.assert_not_called()
+    def test_ai_suggestions_are_schema_scoped(self):
+        from jobs.crm_schema_agent import FieldMapping
+        answer=self.ai.return_value.discover_and_map.return_value
+        answer.success=True
+        answer.mappings=[FieldMapping('email','email',94,'Email match',[]),
+            FieldMapping('phone','Invented',99,'Invalid',[]),
+            FieldMapping('notes','email',90,'Duplicate',[]),
+            FieldMapping('secret','email',90,'Invalid source',[])]
+        result=inspect_configuration(self.saved,self.factory)
+        self.assertEqual(len(result['suggestions']),1)
+        self.assertEqual(result['suggestions'][0]['basis'],'ai')
+        self.assertEqual(result['suggestions'][0]['confidence'],94)
+        args=self.ai.return_value.discover_and_map.call_args.args
+        self.assertNotIn('private',str(args))
+        self.assertNotIn('OldEmail',str(args))
+        self.adapter.create_lead.assert_not_called()
+
+    def test_ai_reads_text_after_thinking_blocks(self):
+        from jobs.crm_schema_agent import CRMSchemaAgent
+        from types import SimpleNamespace
+        agent=object.__new__(CRMSchemaAgent)
+        agent.model='fixture'
+        agent.client=Mock()
+        agent.client.messages.create.return_value.content=[SimpleNamespace(type='thinking'),SimpleNamespace(type='text',text='{"mappings":[{"tourspark_field":"email","crm_field":"email","confidence":99,"alternatives":[]}]}')]
+        answer=agent.discover_and_map('lasso',{'fields':[{'name':'email'}]})
+        self.assertTrue(answer.success)
+        self.assertEqual(answer.mappings[0].crm_field,'email')
+
+    def test_malformed_model_response_is_not_labelled_as_ai_success(self):
+        from jobs.crm_schema_agent import CRMSchemaAgent
+        agent=object.__new__(CRMSchemaAgent)
+        with self.assertRaises(ValueError):
+            agent._parse_mapping_response('not JSON', {})
+        self.assertEqual(agent._parse_mapping_response('{"mappings":[null,{"tourspark_field":[],"crm_field":"email"}]}', {}), [])
+
+    def test_ai_failure_preserves_discovered_schema(self):
+        self.ai.side_effect=RuntimeError('private')
+        result=inspect_configuration(self.saved,self.factory)
+        self.assertEqual(result['messageCode'],'ai_mapping_unavailable')
+        self.assertEqual(result['schema']['fields'][0]['name'],'email')
+        self.assertNotIn('private',str(result))
+
     def test_fallback_schema_is_limited(self):
         self.adapter.get_schema.return_value.evidence_source='fallback'
         result=inspect_configuration(self.saved,self.factory)

@@ -1,9 +1,10 @@
-"""Saved CRM setup reads. No lead writes, model calls, learned-pattern writes or activation."""
+"""Saved CRM setup reads. Schema-only AI suggestions; no lead writes, learned-pattern writes or activation."""
 import re
 from urllib.parse import urlsplit
 from utils.supabase_client import get_supabase_client
 from utils.crm_provider_http import get as crm_read
-from jobs.crm_schema_agent import create_fallback_mappings
+from jobs.crm_schema_agent import CRMSchemaAgent, create_fallback_mappings
+from connectors.crm_adapters.base import TOURSPARK_SCHEMA
 FIELD = re.compile(r"^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$")
 
 def rpc(name, args):
@@ -38,9 +39,34 @@ def inspect_configuration(saved, adapter_factory):
     result["schema"] = {"objectName":str(schema.object_name)[:128],"evidenceSource":source,"fields":fields,"truncated":len(fields)!=len(schema.fields)}
     if source != "provider_response" or len(fields)!=len(schema.fields):
         result["status"] = "limited"
-    # These are documented-name suggestions, never cross-client learning or evidence of success.
+    # Send only field metadata to the model, never credentials or lead records.
     schema_input = {"objects":[{"fields":fields}]}
-    result["suggestions"] = [{"source":m.tourspark_field,"target":m.crm_field,"basis":"known_field_names"} for m in create_fallback_mappings(schema_input) if m.crm_field and FIELD.fullmatch(m.crm_field)]
+    mappings = create_fallback_mappings(schema_input)
+    basis = "known_field_names"
+    result["messageCode"] = "ai_mapping_unavailable"
+    try:
+        answer = CRMSchemaAgent().discover_and_map(saved["platform"], schema_input)
+        if answer.success:
+            mappings = answer.mappings
+            basis = "ai"
+            result["messageCode"] = "ai_mapping_suggested"
+    except Exception:
+        pass  # Retain discovery and clearly labelled fallback suggestions.
+    source_names = {f["name"] for f in TOURSPARK_SCHEMA["fields"]}
+    target_names = {f["name"] for f in fields}
+    seen_sources, seen_targets = set(), set()
+    suggestions = []
+    for m in mappings:
+        if (m.tourspark_field not in source_names or m.crm_field not in target_names
+                or m.tourspark_field in seen_sources or m.crm_field in seen_targets
+                or type(m.confidence) is not int or not 50 <= m.confidence <= 100):
+            continue
+        seen_sources.add(m.tourspark_field)
+        seen_targets.add(m.crm_field)
+        suggestions.append({"source":m.tourspark_field,"target":m.crm_field,"basis":basis,
+            "confidence":m.confidence,"reasoning":str(m.reasoning)[:1000],
+            "alternatives":[v for v in m.alternatives if isinstance(v,str) and v in target_names][:5]})
+    result["suggestions"] = suggestions
     targets = set(saved.get("mapping",{}).values())
     result["mappingIssues"] = {"unknownTargets":sorted(targets-{f["name"] for f in fields}),"unmappedRequired":[f["name"] for f in fields if f["required"] and f["name"] not in targets],"schemaEvidence":source}
     return result
