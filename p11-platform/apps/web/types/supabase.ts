@@ -3588,6 +3588,7 @@ export type Database = {
       }
       client_portal_invitations: {
         Row: {
+          revision: number
           portal_products: string[]
           accepted_by: string | null
           created_at: string
@@ -3602,6 +3603,7 @@ export type Database = {
           token_hash: string
         }
         Insert: {
+          revision?: number
           portal_products?: string[]
           accepted_by?: string | null
           created_at?: string
@@ -3616,6 +3618,7 @@ export type Database = {
           token_hash: string
         }
         Update: {
+          revision?: number
           portal_products?: string[]
           accepted_by?: string | null
           created_at?: string

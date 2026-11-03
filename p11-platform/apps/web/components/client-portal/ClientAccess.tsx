@@ -183,6 +183,7 @@ export function ClientAccess() {
       )}
       {data && !loading && <ClientProductAccess
         accounts={data.accounts}
+        invitations={data.invitations}
         canManage={data.canManage}
         onSaved={refresh}
         onInvite={products => open({ kind: "invite", name: "", email: "", properties: [], products })}

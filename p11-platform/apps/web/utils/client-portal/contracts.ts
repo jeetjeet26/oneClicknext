@@ -19,6 +19,13 @@ const properties = z
   .max(100)
   .refine((p) => new Set(p).size === p.length);
 export const accessCommand = z.discriminatedUnion("operation", [
+  z.object({
+    operation: z.literal("update_invitation_products"),
+    requestId: id,
+    targetId: id,
+    revision: z.number().int().positive(),
+    products: productSelection,
+  }).strict(),
   z
     .object({
       operation: z.literal("invite"),
@@ -145,6 +152,7 @@ export type AccessAccount = {
   properties: string[];
 };
 export type AccessInvitation = {
+  revision: number;
   products?: PortalProduct[];
   id: string;
   name: string;
