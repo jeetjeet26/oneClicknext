@@ -57,6 +57,15 @@ def test_missing_profile_and_subtype_explained():
     assert 'apartments for rent' in search_terms(subject_profile({'name':'Senior','property_type':'senior'}))
 
 
+def test_subject_listing_alias_is_excluded_only_with_matching_street():
+    subject = {'name': 'Acacia', 'property_type': 'condo', 'address': {'street': '420 Acacia Avenue'}}
+    alias = candidate('Acacia by Dividend Homes'); alias.address = '420 Acacia Ave, Palo Alto'
+    other = candidate('Acacia Gardens'); other.address = '422 Acacia Ave, Palo Alto'
+    colocated = candidate('Distinct Community'); colocated.address = '420 Acacia Ave, Palo Alto'
+    rows, _ = rank_candidates([alias, other, colocated], subject, None, subject_profile(subject), 0, 0, 3, [])
+    assert {row['name'] for row in rows} == {'Acacia Gardens', 'Distinct Community'}
+
+
 def test_known_competitor_and_transaction_searches():
     k = knowledge('townhome', 'transaction_model: rental', known_competitors=['Named Community'])
     profile = subject_profile({'name':'Subject'}, k)

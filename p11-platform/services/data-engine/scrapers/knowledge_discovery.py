@@ -60,6 +60,14 @@ def normalize(value):
     return re.sub(r'[^a-z0-9]', '', (value or '').lower())
 
 
+def street_identity(value):
+    suffixes = {'avenue': 'ave', 'street': 'st', 'road': 'rd', 'boulevard': 'blvd',
+                'drive': 'dr', 'lane': 'ln', 'court': 'ct', 'place': 'pl',
+                'terrace': 'ter', 'parkway': 'pkwy', 'highway': 'hwy'}
+    street = (value or '').split(',')[0].lower()
+    return normalize(re.sub(r'\b(' + '|'.join(suffixes) + r')\b', lambda match: suffixes[match[0]], street))
+
+
 def segments(text):
     # Negated offerings must not become positive search signals.
     text = re.sub(r'\b(?:no|not|without|does not offer)\b[^.;\n]*', '', text.lower())
@@ -141,6 +149,8 @@ def search_terms(profile, knowledge=None):
 def rank_candidates(properties, property_data, knowledge, profile, lat, lng, radius, existing):
     result, seen = [], set()
     excluded = {normalize(property_data['name'])} | {normalize(c['name']) for c in existing}
+    subject_street = street_identity((property_data.get('address') or {}).get('street'))
+    subject_words = set(re.findall(r'[a-z0-9]+', property_data['name'].lower()))
     subject_segments = set(profile['segments'])
     subject_family = {SEGMENTS.get(s, (s,))[0] for s in subject_segments}
     known = {normalize(n) for n in knowledge.known_competitors} if knowledge else set()
@@ -152,6 +162,8 @@ def rank_candidates(properties, property_data, knowledge, profile, lat, lng, rad
             continue
         if distance > radius or normalize(prop.name) in excluded:
             continue
+        if subject_street and street_identity(prop.address) == subject_street and subject_words <= set(re.findall(r'[a-z0-9]+', prop.name.lower())):
+            continue  # The subject can have a longer provider listing name at the same address.
         identity = prop.source_url if 'place_id:' in prop.source_url else normalize(prop.name) + normalize(prop.address)
         alias = normalize(prop.name) + normalize(prop.address)
         if identity in seen or alias in seen:
