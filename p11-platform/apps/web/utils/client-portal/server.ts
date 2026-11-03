@@ -7,6 +7,7 @@ import { InventoryError } from "@/utils/knowledge/inventory";
 import { readMarketingFacts } from "@/utils/analytics/read-marketing-facts";
 import { buildBiReport, type BiSource } from "@/utils/analytics/report-data";
 import type { PortalScope, PortalData, ClientReport } from "./contracts";
+import { visibleProducts } from "./products";
 export { InventoryError as PortalError };
 export const tokenHash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -63,7 +64,7 @@ export async function clientScope(actor: string) {
   })) as unknown as PortalScope;
 }
 export async function clientLumaProperties(scope: PortalScope) {
-  if (!scope.properties.length) return [];
+  if (!visibleProducts(scope).includes("lumaleasing") || !scope.properties.length) return [];
   const { data, error } = await createServiceClient()
     .from("lumaleasing_config")
     .select("property_id,is_active")
@@ -110,8 +111,9 @@ export async function readPortal(
       "This property is not available to your account.",
       403,
     );
+  const reporting = visibleProducts(scope).includes("reporting");
   const selected = scope.properties.filter(
-    (p) => !query.propertyId || p.id === query.propertyId,
+    (p) => reporting && (!query.propertyId || p.id === query.propertyId),
   );
   const end = new Date().toISOString().slice(0, 10);
   const day = (value: number) => new Date(value).toISOString().slice(0, 10);
@@ -156,11 +158,11 @@ export async function readPortal(
         };
       }),
     ),
-    portalRpc("read_published_delivery_reports", {
+    reporting ? portalRpc("read_published_delivery_reports", {
       p_actor_id: actor,
       p_property_id: query.propertyId ?? null,
       p_offset: query.reportOffset,
-    }),
+    }) : Promise.resolve({ reports: [] }),
     clientLumaProperties(scope),
   ]);
   const normalize = reportingRows;
@@ -281,6 +283,7 @@ export async function readPortal(
   if (
     current.orgId !== scope.orgId ||
     current.revision !== scope.revision ||
+    JSON.stringify(current.products) !== JSON.stringify(scope.products) ||
     JSON.stringify(current.properties) !== JSON.stringify(scope.properties)
   )
     throw new InventoryError(
@@ -289,6 +292,7 @@ export async function readPortal(
     );
   const funnel = sumFunnel("funnel");
   return {
+    products: visibleProducts(scope),
     name: scope.name,
     hasLumaLeasing: chatbotProperties.length > 0,
     properties: scope.properties,

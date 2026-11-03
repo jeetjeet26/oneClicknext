@@ -128,6 +128,7 @@ export function ClientConversations() {
         Skip to content
       </a>
       <ClientPortalHeader
+        products={data?.products ?? []}
         view="conversations"
         name={data?.name}
         hasConversations={!!data?.properties.length}

@@ -184,3 +184,9 @@ describe("client transcript boundary", () => {
     ).rejects.toThrow("could not be loaded");
   });
 });
+
+it("blocks hidden LumaLeasing before loading conversations", async () => {
+  m.scope.mockResolvedValue({ ...scope, products: ["reporting"] });
+  await expect(readClientConversations(actor, query())).rejects.toMatchObject({ status: 403 });
+  expect(m.from).not.toHaveBeenCalled();
+});

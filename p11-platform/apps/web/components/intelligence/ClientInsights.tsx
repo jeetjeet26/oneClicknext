@@ -6,10 +6,12 @@ import { ClientPortalHeader } from "@/components/client-portal/ClientPortalHeade
 import { InsightsView } from "./InsightsView";
 export function ClientInsights({
   name,
+  products,
   hasConversations,
   properties = [],
 }: {
   name: string;
+  products?: import("@/utils/client-portal/products").PortalProduct[];
   hasConversations: boolean;
   properties?: Array<{ id: string; name: string }>;
 }) {
@@ -27,6 +29,7 @@ export function ClientInsights({
         Skip to content
       </a>
       <ClientPortalHeader
+        products={products}
         view="insights"
         name={name}
         hasConversations={hasConversations}

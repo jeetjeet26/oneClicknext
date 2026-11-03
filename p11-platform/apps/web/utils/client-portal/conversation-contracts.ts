@@ -38,6 +38,7 @@ export type ClientMessage = z.infer<
   typeof visitorMessagePage
 >["messages"][number];
 export type ClientConversationsData = {
+  products?: import("./products").PortalProduct[];
   name: string;
   properties: ChatProperty[];
   conversations: ClientConversation[];

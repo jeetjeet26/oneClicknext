@@ -1,3 +1,4 @@
+import { visibleProducts } from "@/utils/client-portal/products";
 import { reportingRows } from "@/utils/analytics/report-quality";
 import { periodMeasures, funnelRates, leaseAttribution, spendingRatios } from "./reporting";
 import {
@@ -45,6 +46,7 @@ export async function readPortfolio(
   }>;
   if (client) {
     scope = await clientScope(actor.id);
+    if (!visibleProducts(scope).includes("reporting")) throw new IntelligenceError("This product is not available to your account.", 403);
     properties = scope.properties;
   } else {
     const membership = await db.rpc("team_member_view", { p_id: actor.id });

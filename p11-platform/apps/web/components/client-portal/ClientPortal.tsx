@@ -305,6 +305,7 @@ export function ClientPortal({ view }: { view: string }) {
         Skip to content
       </a>
       <ClientPortalHeader
+        products={data?.products ?? []}
         view={view}
         name={data?.name}
         hasConversations={!!data?.hasLumaLeasing}
@@ -402,7 +403,9 @@ export function ClientPortal({ view }: { view: string }) {
         ) : (
           data && (
             <>
-              {!data.properties.length ? (
+              {view !== "properties" && data.products && !data.products.includes("reporting") ? (
+                <section className="console-panel p-6"><h2 className="text-xl font-semibold">Your client workspace</h2><p className="console-muted mt-2">Use the navigation above to explore the products your team has shared with you.</p></section>
+              ) : !data.properties.length ? (
                 <section className="console-panel console-empty">
                   <Building2 size={32} />
                   <strong>Your workspace is ready</strong>

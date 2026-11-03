@@ -13,9 +13,10 @@ import type {
   AccessAccount,
   AccessRoster,
 } from "@/utils/client-portal/contracts";
+import { portalProducts, visibleProducts, legacyPortalProducts, type PortalProduct } from "@/utils/client-portal/products";
 type Editor =
-  | { kind: "invite"; name: string; email: string; properties: string[] }
-  | { kind: "edit"; account: AccessAccount; properties: string[] }
+  | { kind: "invite"; name: string; email: string; properties: string[]; products: PortalProduct[] }
+  | { kind: "edit"; account: AccessAccount; properties: string[]; products: PortalProduct[] }
   | { kind: "revoke"; account: AccessAccount }
   | { kind: "revoke_invitation"; id: string; name: string };
 export function ClientAccess() {
@@ -83,6 +84,7 @@ export function ClientAccess() {
               name: editor.name.trim(),
               email: editor.email.trim(),
               propertyIds: editor.properties,
+              products: editor.products,
             }
           : editor.kind === "edit"
             ? {
@@ -90,6 +92,7 @@ export function ClientAccess() {
                 targetId: editor.account.id,
                 revision: editor.account.revision,
                 propertyIds: editor.properties,
+                products: editor.products,
               }
             : editor.kind === "revoke"
               ? {
@@ -157,7 +160,7 @@ export function ClientAccess() {
             <button
               className="console-action console-action-primary"
               onClick={() =>
-                open({ kind: "invite", name: "", email: "", properties: [] })
+                open({ kind: "invite", name: "", email: "", properties: [], products: [...legacyPortalProducts] })
               }
             >
               <Plus size={16} />
@@ -264,6 +267,7 @@ export function ClientAccess() {
                               open({
                                 kind: "edit",
                                 account: a,
+                                products: [...visibleProducts(a)],
                                 properties: a.properties.filter((id) =>
                                   data.properties.some((p) => p.id === id),
                                 ),
@@ -271,7 +275,7 @@ export function ClientAccess() {
                             }
                           >
                             {a.status === "active"
-                              ? "Edit properties"
+                              ? "Edit access"
                               : "Restore access"}
                           </button>
                           {a.status === "active" && (
@@ -385,7 +389,7 @@ export function ClientAccess() {
                   : editor?.kind === "invite"
                     ? "Invite a client"
                     : editor?.kind === "edit"
-                      ? "Choose property access"
+                      ? "Choose client access"
                       : editor?.kind === "revoke"
                         ? "Remove client access?"
                         : "Withdraw this invitation?"}
@@ -515,6 +519,18 @@ export function ClientAccess() {
                       Choose at least one property. Clients cannot edit or
                       manage these properties.
                     </p>
+                  </fieldset>
+                )}
+                {(editor.kind === "invite" || editor.kind === "edit") && (
+                  <fieldset disabled={busy}>
+                    <legend className="font-medium text-sm mb-2">Products shown in the client portal</legend>
+                    <p className="console-muted mb-3">Choose what this client can see across their assigned properties. Hiding a product does not deactivate it or change your team’s access.</p>
+                    <div className="console-property-checks">
+                      {portalProducts.map(product => <label key={product.id}>
+                        <input type="checkbox" checked={editor.products.includes(product.id)} onChange={event => setEditor({ ...editor, products: event.target.checked ? [...editor.products, product.id] : editor.products.filter(id => id !== product.id) })} />
+                        <span><strong className="block">{product.name}</strong><span className="console-muted">{product.description}</span></span>
+                      </label>)}
+                    </div>
                   </fieldset>
                 )}
                 {editor.kind === "revoke" && (

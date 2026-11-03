@@ -3544,6 +3544,7 @@ export type Database = {
       }
       client_portal_accounts: {
         Row: {
+          portal_products: string[]
           created_at: string
           display_name: string
           email: string
@@ -3554,6 +3555,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          portal_products?: string[]
           created_at?: string
           display_name: string
           email: string
@@ -3564,6 +3566,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          portal_products?: string[]
           created_at?: string
           display_name?: string
           email?: string
@@ -3585,6 +3588,7 @@ export type Database = {
       }
       client_portal_invitations: {
         Row: {
+          portal_products: string[]
           accepted_by: string | null
           created_at: string
           created_by: string
@@ -3598,6 +3602,7 @@ export type Database = {
           token_hash: string
         }
         Insert: {
+          portal_products?: string[]
           accepted_by?: string | null
           created_at?: string
           created_by: string
@@ -3611,6 +3616,7 @@ export type Database = {
           token_hash: string
         }
         Update: {
+          portal_products?: string[]
           accepted_by?: string | null
           created_at?: string
           created_by?: string

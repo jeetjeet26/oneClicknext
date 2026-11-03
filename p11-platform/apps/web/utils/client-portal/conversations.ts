@@ -1,3 +1,4 @@
+import { visibleProducts } from "./products";
 import { createServiceClient } from "@/utils/supabase/admin";
 import {
   clientScope,
@@ -21,6 +22,7 @@ export async function readClientConversations(
   query: z.infer<typeof clientConversationQuery>,
 ): Promise<ClientConversationsData> {
   const scope = await clientScope(actor);
+  if (!visibleProducts(scope).includes("lumaleasing")) throw new PortalError("This product is not available to your account.", 403);
   if (
     query.propertyId &&
     !scope.properties.some((p) => p.id === query.propertyId)
@@ -36,6 +38,7 @@ export async function readClientConversations(
   const ids = eligible.map((p) => p.id);
   const db = createServiceClient();
   const result: ClientConversationsData = {
+    products: visibleProducts(scope),
     name: scope.name,
     properties,
     conversations: [],

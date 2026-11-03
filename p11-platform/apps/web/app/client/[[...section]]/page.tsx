@@ -1,3 +1,6 @@
+import { ClientProduct } from "@/components/client-portal/ClientProduct";
+import { clientScope, portalActor } from "@/utils/client-portal/server";
+import { visibleProducts } from "@/utils/client-portal/products";
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { ClientPortal } from "@/components/client-portal/ClientPortal";
@@ -11,11 +14,16 @@ export default async function ClientPage({
   if (
     section.length > 1 ||
     (section.length === 1 &&
-      !["performance", "properties", "reports", "conversations"].includes(
+      !["performance", "properties", "reports", "conversations", "marketvision", "reviewflow"].includes(
         section[0],
       ))
   )
     notFound();
+  const actor = await portalActor();
+  const scope = await clientScope(actor.id);
+  const required = ["performance", "reports"].includes(section[0]) ? "reporting" : section[0] === "conversations" ? "lumaleasing" : section[0];
+  if (required && required !== "properties" && !visibleProducts(scope).some(p => p === required)) notFound();
+  if (section[0] === "marketvision" || section[0] === "reviewflow") return <ClientProduct actor={actor.id} product={section[0]} />;
   return (
     <Suspense
       fallback={

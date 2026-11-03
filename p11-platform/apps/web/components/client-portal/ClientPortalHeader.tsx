@@ -1,5 +1,7 @@
 "use client";
 import Link from "next/link";
+import { BarChart3 } from "lucide-react";
+import { portalProducts, legacyPortalProducts, type PortalProduct } from "@/utils/client-portal/products";
 import { useState } from "react";
 import { LogOut } from "lucide-react";
 import { P11Logo } from "@/components/ui/P11Logo";
@@ -8,11 +10,13 @@ import { signOut } from "@/app/auth/actions";
 
 export function ClientPortalHeader({
   view,
+  products = legacyPortalProducts,
   name,
   hasConversations,
   href,
 }: {
   view: string;
+  products?: PortalProduct[];
   name?: string;
   hasConversations: boolean;
   href: (path: string) => string;
@@ -34,10 +38,12 @@ export function ClientPortalHeader({
           </span>
         </Link>
         <nav aria-label="Client navigation" className="portal-nav">
-          {portalNavigation
+          {[...portalNavigation, ...portalProducts.filter(p => ["marketvision", "reviewflow"].includes(p.id)).map(p => ({ href: p.href, label: p.name, icon: BarChart3 }))]
+            .filter(item => !["/client/performance", "/client/reports"].includes(item.href) || products.includes("reporting"))
+            .filter(item => !["/client/marketvision", "/client/reviewflow"].includes(item.href) || products.some(p => item.href === "/client/" + p))
             .filter(
               (item) =>
-                item.href !== "/client/conversations" || hasConversations,
+                item.href !== "/client/conversations" || (hasConversations && products.includes("lumaleasing")),
             )
             .map((item) => {
               const active =

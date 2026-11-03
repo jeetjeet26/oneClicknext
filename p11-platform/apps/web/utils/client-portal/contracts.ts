@@ -1,6 +1,7 @@
 import type { BiReport } from "@/utils/analytics/report-data";
 import type { Funnel, Goal, ReportEvidence } from "@/utils/delivery/contracts";
 import { z } from "zod";
+import { productSelection, legacyPortalProducts, type PortalProduct } from "./products";
 export const id = z.string().uuid();
 export const portalQuery = z
   .object({
@@ -28,6 +29,7 @@ export const accessCommand = z.discriminatedUnion("operation", [
         .max(254)
         .transform((v) => v.toLowerCase()),
       propertyIds: properties,
+      products: productSelection.default(legacyPortalProducts),
     })
     .strict(),
   z
@@ -37,6 +39,7 @@ export const accessCommand = z.discriminatedUnion("operation", [
       targetId: id,
       revision: z.number().int().positive(),
       propertyIds: properties,
+      products: productSelection.default(legacyPortalProducts),
     })
     .strict(),
   z
@@ -66,6 +69,7 @@ export type PortalProperty = {
   };
 };
 export type PortalScope = {
+  products?: PortalProduct[];
   state: "ready";
   name: string;
   orgId: string;
@@ -97,6 +101,7 @@ export type ClientReport = {
   };
 };
 export type PortalData = {
+  products?: PortalProduct[];
   name: string;
   hasLumaLeasing: boolean;
   properties: PortalProperty[];
@@ -131,6 +136,7 @@ export type PortalData = {
   goals: (Goal & { propertyName: string })[];
 };
 export type AccessAccount = {
+  products?: PortalProduct[];
   id: string;
   name: string;
   email: string;
@@ -139,6 +145,7 @@ export type AccessAccount = {
   properties: string[];
 };
 export type AccessInvitation = {
+  products?: PortalProduct[];
   id: string;
   name: string;
   email: string;
