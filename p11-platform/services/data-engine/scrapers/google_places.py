@@ -279,7 +279,7 @@ class GooglePlacesScraper:
             # Bound each lane; do not send private community evidence to providers.
             client = googlemaps.Client(key=self.api_key, timeout=8, retry_timeout=10)
             try:
-                return client.places(query=f"{keyword} near {lat},{lng}",
+                return client.places_nearby(keyword=keyword,
                     location=(lat, lng), radius=min(int(radius_miles * 1609.34), 50000)), None
             except Exception:
                 return None, 'One Google Places search could not complete. Results may be incomplete.'

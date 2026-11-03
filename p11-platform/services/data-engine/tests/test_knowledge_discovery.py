@@ -91,10 +91,12 @@ def test_google_search_keeps_broad_lane_even_when_direct_lane_fills_limit(monkey
     import googlemaps
     calls=[]
     def places(**kwargs):
-        calls.append(kwargs['query'])
-        prefix='Senior' if 'senior' in kwargs['query'] else 'Broad'
+        calls.append(kwargs['keyword'])
+        assert kwargs['location'] == (0, 0)
+        assert kwargs['radius'] == int(3 * 1609.34)
+        prefix='Senior' if 'senior' in kwargs['keyword'] else 'Broad'
         return {'results':[{'place_id':prefix+str(i),'name':prefix+str(i),'vicinity':'Main St','geometry':{'location':{'lat':0,'lng':0}}} for i in range(20)],'next_page_token':'more'}
-    monkeypatch.setattr(googlemaps,'Client',lambda **kwargs: SimpleNamespace(places=places))
+    monkeypatch.setattr(googlemaps,'Client',lambda **kwargs: SimpleNamespace(places_nearby=places))
     scraper=GooglePlacesScraper.__new__(GooglePlacesScraper);scraper.api_key='fake';scraper.source='google_places'
     rows,warnings=scraper.search_discovery_pool(0,0,3,['senior living','apartments'],pool_limit=10)
     assert len(calls)==2
@@ -112,7 +114,7 @@ def test_google_amenity_search_excludes_standalone_gyms_but_keeps_housing(monkey
         return {'results': [{'place_id': str(i), 'name': name, 'types': types,
                              'geometry': {'location': {'lat': 0, 'lng': 0}}}
                             for i, (name, types) in enumerate(listings)]}
-    monkeypatch.setattr(googlemaps, 'Client', lambda **kwargs: SimpleNamespace(places=places))
+    monkeypatch.setattr(googlemaps, 'Client', lambda **kwargs: SimpleNamespace(places_nearby=places))
     scraper = GooglePlacesScraper.__new__(GooglePlacesScraper)
     scraper.api_key = 'fake'; scraper.source = 'google_places'
     rows, _ = scraper.search_discovery_pool(0, 0, 3, ['communities fitness'])
@@ -123,9 +125,9 @@ def test_google_partial_and_total_failures_are_distinct(monkeypatch):
     from scrapers.google_places import GooglePlacesScraper
     import googlemaps
     def places(**kwargs):
-        if 'fail' in kwargs['query']: raise RuntimeError('private error')
+        if 'fail' in kwargs['keyword']: raise RuntimeError('private error')
         return {'results':[]}
-    monkeypatch.setattr(googlemaps,'Client',lambda **kwargs: SimpleNamespace(places=places))
+    monkeypatch.setattr(googlemaps,'Client',lambda **kwargs: SimpleNamespace(places_nearby=places))
     scraper=GooglePlacesScraper.__new__(GooglePlacesScraper);scraper.api_key='fake';scraper.source='google_places'
     rows,warnings=scraper.search_discovery_pool(0,0,3,['fail','success'])
     assert not rows and warnings and 'private error' not in str(warnings)
