@@ -89,16 +89,20 @@ def subject_profile(property_data, knowledge=None):
     for signal in signals:
         if re.search(r'competitor|competing|nearby communities', signal.text, re.I):
             continue
-        if 'transaction_model:' in signal.text:
-            transaction = 'rental' if re.search(r'rent|lease', signal.text, re.I) else 'for_sale' if re.search(r'ownership|for sale|purchase', signal.text, re.I) else 'care_services' if re.search(r'care', signal.text, re.I) else None
-        detected = segments(signal.text)
-        offered_services = service_tags(signal.text)
+        # Reviewed facts can explicitly record unknown offerings. Those clauses
+        # must not become positive search signals just because the fact is approved.
+        signal_text = '. '.join(clause for clause in re.split(r'[.;\n]', signal.text)
+                               if not re.search(r'\b(unconfirmed|unverified|unknown|uncertain|not (?:yet )?(?:confirmed|verified))\b', clause, re.I))
+        if 'transaction_model:' in signal_text:
+            transaction = 'rental' if re.search(r'rent|lease', signal_text, re.I) else 'for_sale' if re.search(r'ownership|for sale|purchase', signal_text, re.I) else 'care_services' if re.search(r'care', signal_text, re.I) else None
+        detected = segments(signal_text)
+        offered_services = service_tags(signal_text)
         services |= offered_services
-        if 'community_subtype:' in signal.text:
+        if 'community_subtype:' in signal_text:
             explicit_subtypes |= detected
         if detected:
             specific |= detected
-        if detected or offered_services or 'transaction_model:' in signal.text:
+        if detected or offered_services or 'transaction_model:' in signal_text:
             used.append(signal.id)
     conflict = bool(explicit_subtypes and kind and kind not in {'multifamily', 'luxury', 'mixed_use'} and not any(SEGMENTS[s][0] == kind for s in explicit_subtypes))
     if explicit_subtypes:

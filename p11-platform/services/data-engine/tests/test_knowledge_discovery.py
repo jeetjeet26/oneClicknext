@@ -71,6 +71,14 @@ def test_no_competitor_observation_becomes_subject_offering():
     assert subject_profile({'name':'Subject'},k)['segments'] == ['senior']
 
 
+def test_approved_unknown_offerings_do_not_drive_searches():
+    k = knowledge('senior', 'community_subtype: Independent living. Memory care is unconfirmed. Pool, spa and fitness-center availability remain unconfirmed; ask sales. Dining is available.')
+    profile = subject_profile({'name': 'Subject'}, k)
+    assert profile['segments'] == ['independent_living']
+    assert profile['services'] == ['dining']
+    assert not any('fitness' in term or 'memory care' in term for term in search_terms(profile, k))
+
+
 def test_available_pricing_amenities_and_bedrooms_refine_order():
     good = candidate('Matched Apartments', amenities=['Pool'], units=[ScrapedUnit(unit_type='1br',bedrooms=1,bathrooms=1,rent_min=2000)])
     rows = ranked([candidate('Unknown Apartments'),good], kind='multifamily',text='', amenities=['Pool'],avg_rent=2000,bedrooms=[1])
