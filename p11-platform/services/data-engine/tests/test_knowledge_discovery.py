@@ -94,6 +94,23 @@ def test_google_search_keeps_broad_lane_even_when_direct_lane_fills_limit(monkey
     assert warnings
 
 
+def test_google_amenity_search_excludes_standalone_gyms_but_keeps_housing(monkeypatch):
+    from scrapers.google_places import GooglePlacesScraper
+    import googlemaps
+    listings = [('Ladera Oaks Fitness Club', []), ('Local Exercise Studio', ['gym']),
+                ('Senior Living Fitness Center', ['gym']), ('Broad Apartments', ['gym']),
+                ('The Village Residences', []), ('Unknown Grove', [])]
+    def places(**kwargs):
+        return {'results': [{'place_id': str(i), 'name': name, 'types': types,
+                             'geometry': {'location': {'lat': 0, 'lng': 0}}}
+                            for i, (name, types) in enumerate(listings)]}
+    monkeypatch.setattr(googlemaps, 'Client', lambda **kwargs: SimpleNamespace(places=places))
+    scraper = GooglePlacesScraper.__new__(GooglePlacesScraper)
+    scraper.api_key = 'fake'; scraper.source = 'google_places'
+    rows, _ = scraper.search_discovery_pool(0, 0, 3, ['communities fitness'])
+    assert [row.name for row in rows] == [name for name, _ in listings[2:]]
+
+
 def test_google_partial_and_total_failures_are_distinct(monkeypatch):
     from scrapers.google_places import GooglePlacesScraper
     import googlemaps

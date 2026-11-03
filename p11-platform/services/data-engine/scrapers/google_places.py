@@ -272,6 +272,7 @@ class GooglePlacesScraper:
     def search_discovery_pool(self, lat, lng, radius_miles, keywords, pool_limit=100):
         """Search every lane independently so broad alternatives cannot be starved."""
         from concurrent.futures import ThreadPoolExecutor
+        from scrapers.knowledge_discovery import segments
         import googlemaps
         warnings, places, seen = [], [], set()
         def search(keyword):
@@ -304,6 +305,12 @@ class GooglePlacesScraper:
                     continue
                 # Housing categories remain eligible; reject only clearly unrelated businesses.
                 if re.search(r'\b(storage|hotel|motel|hostel|brokerage|realtor|property management|management company|corporate office|leasing office)\b', place.name, re.I):
+                    continue
+                # Amenity-focused queries can return standalone gyms. Preserve housing
+                # listings with mixed Google categories, including senior communities.
+                housing_name = segments(place.name) or re.search(r'\b(residences?|residential|housing|homes|living)\b', place.name, re.I)
+                fitness_business = 'gym' in place.types or re.search(r'\b(gym|fitness (club|center|centre))\b', place.name, re.I)
+                if fitness_business and not housing_name:
                     continue
                 seen.add(place.place_id)
                 places.append(self.to_scraped_property(place, include_details=False))
