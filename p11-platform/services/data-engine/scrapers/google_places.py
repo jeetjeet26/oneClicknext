@@ -269,6 +269,49 @@ class GooglePlacesScraper:
         logger.info(f"Found {len(all_results)} potential competitors from Google Places (property_type filter: {property_type})")
         return all_results[:max_results]
     
+    def search_discovery_pool(self, lat, lng, radius_miles, keywords, pool_limit=100):
+        """Search every lane independently so broad alternatives cannot be starved."""
+        from concurrent.futures import ThreadPoolExecutor
+        import googlemaps
+        warnings, places, seen = [], [], set()
+        def search(keyword):
+            # Bound each lane; do not send private community evidence to providers.
+            client = googlemaps.Client(key=self.api_key, timeout=8, retry_timeout=10)
+            try:
+                return client.places(query=f"{keyword} near {lat},{lng}",
+                    location=(lat, lng), radius=min(int(radius_miles * 1609.34), 50000)), None
+            except Exception:
+                return None, 'One Google Places search could not complete. Results may be incomplete.'
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            responses = list(executor.map(search, keywords))
+        if all(response is None for response, _ in responses):
+            raise RuntimeError('Google Places search unavailable')
+        # Round-robin results preserve representation from each search lane at the cap.
+        lanes = []
+        for response, warning in responses:
+            if warning:
+                warnings.append(warning)
+            if response and response.get('next_page_token'):
+                warnings.append('Search sources have additional results beyond this bounded search. Narrow the radius to explore more locally.')
+            lanes.append((response or {}).get('results', []))
+        for index in range(max((len(lane) for lane in lanes), default=0)):
+            for lane in lanes:
+                if index >= len(lane):
+                    continue
+                raw = lane[index]
+                place = self._parse_place(raw)
+                if not place or place.place_id in seen:
+                    continue
+                # Housing categories remain eligible; reject only clearly unrelated businesses.
+                if re.search(r'\b(storage|hotel|motel|hostel|brokerage|realtor|property management|management company|corporate office|leasing office)\b', place.name, re.I):
+                    continue
+                seen.add(place.place_id)
+                places.append(self.to_scraped_property(place, include_details=False))
+                if len(places) >= pool_limit:
+                    warnings.append('The candidate collection limit was reached. Narrow the radius to explore more locally.')
+                    return places, list(dict.fromkeys(warnings))
+        return places, list(dict.fromkeys(warnings))
+
     def get_place_details(self, place_id: str) -> Optional[Dict[str, Any]]:
         """
         Get detailed information about a place

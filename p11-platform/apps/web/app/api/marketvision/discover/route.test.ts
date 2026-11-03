@@ -1,21 +1,23 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
-const mocks = vi.hoisted(() => ({auth: vi.fn(), fetch: vi.fn()}))
+const mocks = vi.hoisted(() => ({auth: vi.fn(), fetch: vi.fn(), context: vi.fn()}))
 vi.mock('@/utils/marketvision/decision-store', async () => ({...await vi.importActual<object>('@/utils/marketvision/decision-store'), requireMarketOperator: mocks.auth}))
 vi.mock('@/utils/services/runtime-config', () => ({getDataEngineUrl: () => 'https://engine.example', getDataEngineHeaders: () => ({'X-API-Key': 'test-key'})}))
+vi.mock('@/utils/marketvision/discovery-context', () => ({loadDiscoveryContext: mocks.context}))
+import { BrainError } from '@/utils/community-brain/contracts'
 import { POST } from './route'
 import { MarketStoreError } from '@/utils/marketvision/decision-store'
 const propertyId = '11111111-1111-1111-1111-111111111111'
 const body = {propertyId, radiusMiles: 3, maxCompetitors: 20}
 const request = (input = body) => new NextRequest('http://localhost/api/marketvision/discover', {method: 'POST', body: JSON.stringify(input)})
-beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('fetch', mocks.fetch); vi.stubEnv('OUTBOUND_DELIVERY_PAUSED', 'false'); mocks.auth.mockResolvedValue('actor') })
+beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('fetch', mocks.fetch); vi.stubEnv('OUTBOUND_DELIVERY_PAUSED', 'false'); mocks.auth.mockResolvedValue('actor'); mocks.context.mockResolvedValue({context: null, warnings: []}) })
 afterEach(() => {vi.unstubAllGlobals(); vi.unstubAllEnvs()})
 it('authorizes property access and searches without automatic additions or price imports', async () => {
   mocks.fetch.mockResolvedValue(Response.json({success: true, data: {success: true, property_name: 'Subject', competitors: [{name: 'Nearby', address: '123 Main', website_url: 'https://example.com', units: [{rent_min: 2000}]}]}}))
   const response = await POST(request())
   expect(response.status).toBe(200)
   expect(mocks.auth).toHaveBeenCalledWith(propertyId)
-  expect(JSON.parse(mocks.fetch.mock.calls[0][1].body)).toEqual({property_id: propertyId, radius_miles: 3, max_competitors: 20, auto_add: false})
+  expect(JSON.parse(mocks.fetch.mock.calls[0][1].body)).toEqual({property_id: propertyId, radius_miles: 3, max_competitors: 20, auto_add: false, community_context: null})
   const data = await response.json()
   expect(data.candidates[0].values).toMatchObject({name: 'Nearby', website_url: 'https://example.com'})
   expect(data.candidates[0].values).not.toHaveProperty('units')
@@ -43,4 +45,23 @@ it('does not misreport a failed engine response as zero results or leak provider
 it('rejects malformed successful responses', async () => {
   mocks.fetch.mockResolvedValue(Response.json({success: true}))
   expect((await POST(request())).status).toBe(502)
+})
+
+it('passes only server-resolved community knowledge to discovery', async () => {
+  const context = {property_id: propertyId, context_hash: 'reviewed', signals: [{id: 'fact:living', text: 'active adult'}]}
+  mocks.context.mockResolvedValue({context, warnings: ['Profile incomplete']})
+  mocks.fetch.mockResolvedValue(Response.json({success: true, data: {success: true, property_name: 'Subject', competitors: [], warnings: ['Partial source results']}}))
+  const response = await POST(request())
+  expect(mocks.context).toHaveBeenCalledWith('actor', propertyId)
+  expect(JSON.parse(mocks.fetch.mock.calls[0][1].body).community_context).toEqual(context)
+  expect((await response.json()).warnings).toEqual(['Profile incomplete', 'Partial source results'])
+})
+it('does not fall back across a community knowledge permission failure', async () => {
+  mocks.context.mockRejectedValue(new BrainError('Forbidden', 403))
+  expect((await POST(request())).status).toBe(403)
+  expect(mocks.fetch).not.toHaveBeenCalled()
+})
+it('rejects caller-supplied community knowledge', async () => {
+  expect((await POST(request({...body, community_context: {property_id: 'another'}} as typeof body))).status).toBe(400)
+  expect(mocks.fetch).not.toHaveBeenCalled()
 })

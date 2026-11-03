@@ -17,6 +17,10 @@ const url = z
     }
   });
 export const fieldRegistry = {
+  community_subtype: ["Community subtype / living options", "Competitive relevance"],
+  care_services: ["Care and resident services", "Competitive relevance"],
+  transaction_model: ["Rental, ownership or care model", "Competitive relevance"],
+  known_competitors: ["Known competitors (one name per line)", "Competitive relevance"],
   lifecycle_stage: ["Lifecycle stage", "Identity"],
   market: ["Market", "Identity"],
   submarket: ["Submarket", "Identity"],

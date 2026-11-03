@@ -24,6 +24,7 @@ class GeocodedLocation:
     state: Optional[str] = None
     zip_code: Optional[str] = None
     country: str = "US"
+    is_street_level: bool = False
 
 
 class GeocodingService:
@@ -82,7 +83,8 @@ class GeocodingService:
                 address=location.address,
                 city=city,
                 state=state,
-                zip_code=zip_code
+                zip_code=zip_code,
+                is_street_level=bool(raw.get('road') or raw.get('house_number'))
             )
             
         except GeocoderTimedOut:
