@@ -1,4 +1,5 @@
 "use client";
+import { ClientProductAccess } from "./ClientProductAccess";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
@@ -180,6 +181,12 @@ export function ClientAccess() {
           {error}
         </p>
       )}
+      {data && !loading && <ClientProductAccess
+        accounts={data.accounts}
+        canManage={data.canManage}
+        onSaved={refresh}
+        onInvite={products => open({ kind: "invite", name: "", email: "", properties: [], products })}
+      />}
       <div className="console-panel p-6 flex flex-col sm:flex-row gap-6 sm:items-center justify-between">
         <div className="flex gap-4">
           <div className="console-icon-tile">
