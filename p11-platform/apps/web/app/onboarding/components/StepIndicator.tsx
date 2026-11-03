@@ -71,7 +71,7 @@ export function StepIndicator({ currentStep }: StepIndicatorProps) {
       {/* Mobile view - simplified */}
       <div className="md:hidden">
         <div className="flex items-center justify-center gap-1.5">
-          {visibleSteps.map((step, index) => {
+          {visibleSteps.map((step) => {
             const stepIndex = STEPS_ORDER.indexOf(step)
             const isCompleted = currentIndex > stepIndex
             const isCurrent = step === currentStep

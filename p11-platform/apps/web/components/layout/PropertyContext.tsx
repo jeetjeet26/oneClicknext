@@ -73,7 +73,7 @@ export function PropertyProvider({ children }: { children: ReactNode }) {
       const properties = parseProperties(await response.json());
       if (controller.signal.aborted) return false;
       if (preferredId && !properties.some(property => property.id === preferredId)) throw new Error('Saved property not returned');
-      const urlId = extractPropertyIdFromPath(pathnameRef.current);
+      const urlId = extractPropertyIdFromPath(pathnameRef.current) || new URLSearchParams(window.location.search).get('propertyId');
       const storedId = storedSelection();
       setState(previous => {
         const selectedId = [preferredId, urlId, previous.selectedId, storedId]
@@ -118,7 +118,7 @@ export function PropertyProvider({ children }: { children: ReactNode }) {
     // deep link before the boundary mounts the newly selected property's page.
     if (pathnameRef.current === '/dashboard/community') {
       const url = new URL(window.location.href);
-      for (const key of ['knowledgeGroup', 'knowledgeFile', 'knowledgeSource', 'knowledgeVersion',
+      for (const key of ['propertyId', 'knowledgeGroup', 'knowledgeFile', 'knowledgeSource', 'knowledgeVersion',
         'knowledgeExtraction', 'knowledgeCapture', 'assistantFactVersion', 'unitReview', 'unitVersion']) {
         url.searchParams.delete(key);
       }

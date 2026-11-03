@@ -1,6 +1,10 @@
 'use client'
 
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react'
+import {emptyIntake,type SetupIntake} from '@/utils/property-setup/intake'
+
+import { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react'
+import {readPropertyDraft,savePropertyDraft} from '@/utils/property-setup/draft-client'
+import {snapshotFromForm,formFromSnapshot} from '@/utils/property-setup/form'
 import type {SetupSnapshot}from '@/utils/property-setup/contracts'
 import type {TemplateSelection}from '@/utils/property-setup/creation-contracts'
 import type { PropertyType } from '@/utils/property-types'
@@ -107,6 +111,7 @@ export interface Address {
 }
 
 export interface CommunityData {
+  intake?: SetupIntake
   name: string
   type: CommunityType | ''
   address: Address
@@ -190,6 +195,10 @@ export interface AddPropertyFormData {
 }
 
 export interface AddPropertyContextType {
+  saveDraft:(nextStep?:AddPropertyStep)=>Promise<boolean>
+  restoreDraft:(propertyId:string,latestHash:string)=>Promise<boolean>
+  draftNotice:string
+  dirty:boolean
   setupHash:string
   setSetupHash:(value:string)=>void
   setupSnapshot:SetupSnapshot|null
@@ -225,6 +234,7 @@ export interface AddPropertyContextType {
 
 const initialFormData: AddPropertyFormData = {
   community: {
+    intake: emptyIntake(),
     name: '',
     type: '',
     address: { street: '', city: '', state: '', zip: '' },
@@ -258,6 +268,28 @@ export function AddPropertyProvider({ children, initialData, propertyId }: AddPr
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [createdPropertyId, setCreatedPropertyId] = useState<string | null>(propertyId || null)
+  const [draftRevision,setDraftRevision]=useState(0)
+  const [draftNotice,setDraftNotice]=useState('')
+  const [savedForm,setSavedForm]=useState('')
+  const savingDraft=useRef(false)
+  const dirty=!!createdPropertyId&&step!=='complete'&&JSON.stringify(formData)!==savedForm
+  useEffect(()=>{if(!dirty)return;const warn=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue=''};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn)},[dirty])
+  async function restoreDraft(id:string,latestHash:string){
+    const result=await readPropertyDraft(id)
+    setDraftRevision(result.revision)
+    if(!result.draft)return false
+    if(result.baseHash!==latestHash){setDraftNotice("The property changed after this draft. Its latest saved details are loaded; review them before saving again.");return false}
+    const restored={...formFromSnapshot(result.draft),documents:[]} as AddPropertyFormData
+    setFormData(restored);setSavedForm(JSON.stringify(restored));setSetupHash(result.baseHash!);setStep(result.draft.step);setDraftNotice('Saved setup draft restored.');return true
+  }
+  async function saveDraft(nextStep:AddPropertyStep=step){
+    if(!createdPropertyId||!setupHash||nextStep==='complete'||savingDraft.current)return false
+    savingDraft.current=true;setIsLoading(true);setError(null);setDraftNotice('')
+    try{const result=await savePropertyDraft(createdPropertyId,{...snapshotFromForm(formData,setupSnapshot),step:nextStep},draftRevision,setupHash);setDraftRevision(result.revision);setSavedForm(JSON.stringify(formData));setStep(nextStep);setDraftNotice('Setup draft saved privately. Product reviews and connections remain separate.');return true}
+    catch(e){setError(e instanceof Error?e.message:'The draft could not be confirmed. Keep this page open and retry.');return false}
+    finally{savingDraft.current=false;setIsLoading(false)}
+  }
+
   const [editMode] = useState<EditMode>({
     isEditing: !!propertyId,
     propertyId: propertyId
@@ -363,21 +395,11 @@ export function AddPropertyProvider({ children, initialData, propertyId }: AddPr
     }
   }, [step, formData])
 
-  const goToNextStep = useCallback(() => {
-    const currentIndex = ADD_PROPERTY_STEPS.indexOf(step)
-    if (currentIndex < ADD_PROPERTY_STEPS.length - 1) {
-      setStep(ADD_PROPERTY_STEPS[currentIndex + 1])
-    }
-  }, [step])
-
-  const goToPreviousStep = useCallback(() => {
-    const currentIndex = ADD_PROPERTY_STEPS.indexOf(step)
-    if (currentIndex > 0) {
-      setStep(ADD_PROPERTY_STEPS[currentIndex - 1])
-    }
-  }, [step])
+  function goToNextStep(){const index=ADD_PROPERTY_STEPS.indexOf(step);if(index<ADD_PROPERTY_STEPS.length-2)void saveDraft(ADD_PROPERTY_STEPS[index+1])}
+  function goToPreviousStep(){const index=ADD_PROPERTY_STEPS.indexOf(step);if(index>0)void saveDraft(ADD_PROPERTY_STEPS[index-1])}
 
   const value: AddPropertyContextType = {
+    saveDraft,restoreDraft,draftNotice,dirty,
     setupHash,setSetupHash,setupSnapshot,setSetupSnapshot,creationTemplate,setCreationTemplate,templatePending,setTemplatePending,
     step,
     setStep,

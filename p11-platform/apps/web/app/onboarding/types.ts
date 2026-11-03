@@ -1,6 +1,7 @@
 // Onboarding Types for Phase 1
 
 import type { PropertyType } from '@/utils/property-types'
+import type { SetupIntake } from '@/utils/property-setup/intake'
 
 export type OnboardingStep = 
   | 'organization' 
@@ -67,11 +68,12 @@ export interface OrganizationData {
 
 // Property data (internally uses 'community' key for backward compat)
 export interface PropertyData {
+  intake?: SetupIntake
   name: string
   type: PropertyType | ''
   address: Address
   websiteUrl: string
-  additionalUrls: string[]  // Additional pages to scrape into knowledge base
+  additionalUrls: string[]  // References; importing and review are separate decisions.
   unitCount: string
   yearBuilt: string
   amenities: string[]

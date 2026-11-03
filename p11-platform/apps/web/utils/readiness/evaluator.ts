@@ -1,6 +1,7 @@
 import {hashBrandForgeContract,normalizeBrandAssetRow} from '@/utils/brandforge/normalize'
 import { hashSiteForgeContent } from '@/utils/siteforge/content-hash'
 import { getAssetUsability } from '@/utils/siteforge/assets/curation'
+import { publicContactFromProperty } from '@/utils/property-setup/intake'
 import { isSyntheticInventorySource } from '@/utils/siteforge/providers/inventory-policy'
 import { normalizePublicWebsiteUrl } from '@/utils/services/public-url'
 import type { Tables } from '@/types/supabase'
@@ -238,8 +239,8 @@ export function evaluateReadinessSources(sources:ReadinessSources,enabledCapabil
       }).length === 0,
   )
 
-  const primaryContact = contacts.find(contact => contact.is_primary)
-  const contactReady = Boolean(primaryContact?.phone && primaryContact.email)
+  const publicContact = publicContactFromProperty(property)
+  const contactReady = Boolean(publicContact?.phone && publicContact.email)
   const propertyAddress = asRecord(property.address)
   const addressReady = Boolean(
     propertyAddress.street || propertyAddress.address1 || propertyAddress.line1,
@@ -253,7 +254,7 @@ export function evaluateReadinessSources(sources:ReadinessSources,enabledCapabil
     identityContact: report(
       contactReady && Boolean(property.name && addressReady),
       readinessApprovalPolicyForDomain('identityContact'),
-      ['Property identity, address, primary leasing phone, and email are required'],
+      ['Property identity, address, and phone and email explicitly confirmed for public use are required'],
       [property.id, ...contacts.map(contact => contact.id)],
     ),
     brand: report(
@@ -331,7 +332,7 @@ export function evaluateReadinessSources(sources:ReadinessSources,enabledCapabil
     includeAdditionalUrlsInOnboardingPayload({
       readinessEvidence:{sourceHash,policyVersion:'readiness.review.v1' as const},
       property,
-      contacts,
+      contacts: publicContact ? [{id: property.id, property_id: property.id, contact_type: 'primary', is_primary: true, role: 'Public contact', name: publicContact.name, email: publicContact.email, phone: publicContact.phone}] : [],
       brand: brand ? asRecord(brand) : {},
       assets: approvedAssets,
       units: approvedUnits,

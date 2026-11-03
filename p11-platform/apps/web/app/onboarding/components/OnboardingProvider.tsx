@@ -1,4 +1,5 @@
 'use client'
+import {emptyIntake} from '@/utils/property-setup/intake'
 
 import { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react'
 import {draftFromForm,formFromDraft,organizationDraft,validateCompleteDraft,type OrganizationWorkspace} from '@/utils/property-setup/organization-contracts'
@@ -24,6 +25,7 @@ const initialFormData: OnboardingFormData = {
     legalName: ''
   },
   community: {
+    intake: emptyIntake(),
     name: '',
     type: '',
     address: { street: '', city: '', state: '', zip: '' },
@@ -45,12 +47,12 @@ const OnboardingContext = createContext<Context | undefined>(undefined)
 export function OnboardingProvider({ children }: { children: ReactNode }) {
   const [step, setStep] = useState<OnboardingStep>('organization')
   const [formData, setFormData] = useState<OnboardingFormData>(initialFormData)
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const[workspace,setWorkspace]=useState<OrganizationWorkspace|null>(null),[pending,setPending]=useState<PendingOrganization|null>(null),[notice,setNotice]=useState(''),[selectedHistory,setSelectedHistory]=useState<Record<string,unknown>|null>(null)
   const mounted=useRef(false),loadSequence=useRef(0)
-  const loadWorkspace=useCallback(async()=>{const token=++loadSequence.current;const value=await knowledgeFetch(organizationUrl())as OrganizationWorkspace;if(!value.actorId||!Array.isArray(value.items))throw new Error('The saved setup could not be verified.');if(value.setup)value.setup.draft=organizationDraft.parse(value.setup.draft);if(!mounted.current||token!==loadSequence.current)return value;setWorkspace(value);setPending(pendingOrganization(value.actorId));setSelectedHistory(null);if(value.setup){setFormData(formFromDraft(value.setup.draft));setStep(value.setup.state==='completed'?'complete':value.setup.draft.step)}return value},[])
-  useEffect(()=>{let active=true;mounted.current=true;setIsLoading(true);loadWorkspace().catch(e=>{if(active&&mounted.current){setWorkspace(null);setError(e instanceof Error?e.message:'Saved setup is unavailable.')}}).finally(()=>{if(active&&mounted.current)setIsLoading(false)});return()=>{active=false;mounted.current=false}},[loadWorkspace])
+  const loadWorkspace=useCallback(()=>{const token=++loadSequence.current;return knowledgeFetch(organizationUrl()).then(raw=>{const value=raw as OrganizationWorkspace;if(!value.actorId||!Array.isArray(value.items))throw new Error('The saved setup could not be verified.');if(value.setup)value.setup.draft=organizationDraft.parse(value.setup.draft);if(!mounted.current||token!==loadSequence.current)return value;setWorkspace(value);setPending(pendingOrganization(value.actorId));setSelectedHistory(null);if(value.setup){setFormData(formFromDraft(value.setup.draft));setStep(value.setup.state==='completed'?'complete':value.setup.draft.step)}return value})},[])
+  useEffect(()=>{let active=true;mounted.current=true;loadWorkspace().catch(e=>{if(active&&mounted.current){setWorkspace(null);setError(e instanceof Error?e.message:'Saved setup is unavailable.')}}).finally(()=>{if(active&&mounted.current)setIsLoading(false)});return()=>{active=false;mounted.current=false}},[loadWorkspace])
   async function reloadDraft(){setIsLoading(true);setError(null);setWorkspace(null);try{await loadWorkspace()}catch(e){if(mounted.current)setError(e instanceof Error?e.message:'Saved setup is unavailable.')}finally{if(mounted.current)setIsLoading(false)}}
   async function saveDraft(nextStep:OnboardingStep=step){if(!workspace||workspace.alreadyMember||workspace.setup?.state==='completed'||pending)return null;setIsLoading(true);setError(null);setNotice('');let wrote=false;try{const draft=draftFromForm(formData,nextStep,workspace.setup?.draft),result=await postOrganization(workspace.actorId,{operation:'save',expectedRevision:workspace.setup?.revision??0,draft,reason:`Save first-time setup draft at ${nextStep}`});wrote=true;if(!mounted.current)return null;setPending(null);setNotice('Setup draft saved privately. Your organization has not been created yet.');const current=await loadWorkspace();if(current.setup?.revision!==result.revision)throw new Error('The saved setup changed again. Review its current version before continuing.');return{revision:Number(result.revision),draftHash:String(result.draftHash)}}catch(e){if(mounted.current){if(wrote)setWorkspace(null);setError(e instanceof Error?e.message:'Setup save could not be confirmed.');setPending(pendingOrganization(workspace.actorId))}return null}finally{if(mounted.current)setIsLoading(false)}}
   async function recoverDecision(cancel=false){if(!pending)return;setIsLoading(true);setError(null);try{const value=cancel?await knowledgeFetch('/api/onboarding',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requestId:pending.id,operation:'cancel_unused',inputHash:pending.hash,reason:'Cancel only unused first-time setup decision after checking saved state'})}):await knowledgeFetch(organizationUrl({decisionId:pending.id}));const result=value.result||value;if(result.decisionId!==pending.id)throw new Error('The retained setup decision did not match.');if(!mounted.current)return;clearPendingOrganization(pending.actorId,pending.id);setPending(null);setNotice(result.cancelled?'Unused setup decision cancelled. A delayed copy cannot save.':'Saved setup decision recovered.');await loadWorkspace()}catch(e){if(mounted.current)setError(e instanceof Error?e.message:'Setup recovery could not be confirmed.')}finally{if(mounted.current)setIsLoading(false)}}

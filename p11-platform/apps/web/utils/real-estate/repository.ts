@@ -505,6 +505,9 @@ function compositionFromProfile(
   current: PersistedPropertyVerticalProfile
 ): VerticalCompositionRequest {
   const attributes = record(current.profile.attributes)
+  if (attributes.onboardingClassification && current.mappingStatus !== 'confirmed') {
+    throw new PropertyVerticalProfileError('Review the property purpose and classification in setup before starting website discovery.', 409)
+  }
   const explicit = verticalCompositionRequestSchema.safeParse(
     attributes.siteforgeComposition || attributes.siteforge_composition
   )

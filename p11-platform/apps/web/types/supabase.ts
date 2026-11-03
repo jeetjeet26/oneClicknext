@@ -1,4 +1,4 @@
-// schema_migration_version: 20261015214530
+// schema_migration_version: 20261030210846
 export type Json =
   | string
   | number
@@ -20886,6 +20886,118 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "vw_property_marketing_setup"
             referencedColumns: ["property_id", "org_id"]
+          },
+        ]
+      }
+      property_onboarding_draft_receipts: {
+        Row: {
+          actor_id: string
+          created_at: string
+          id: string
+          input_hash: string
+          property_id: string
+          result: Json
+        }
+        Insert: {
+          actor_id: string
+          created_at?: string
+          id: string
+          input_hash: string
+          property_id: string
+          result: Json
+        }
+        Update: {
+          actor_id?: string
+          created_at?: string
+          id?: string
+          input_hash?: string
+          property_id?: string
+          result?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_onboarding_draft_receipts_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_onboarding_draft_receipts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_onboarding_draft_receipts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "property_onboarding_draft_receipts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
+      property_onboarding_drafts: {
+        Row: {
+          actor_id: string
+          base_hash: string
+          draft: Json
+          property_id: string
+          revision: number
+          updated_at: string
+        }
+        Insert: {
+          actor_id: string
+          base_hash: string
+          draft: Json
+          property_id: string
+          revision: number
+          updated_at?: string
+        }
+        Update: {
+          actor_id?: string
+          base_hash?: string
+          draft?: Json
+          property_id?: string
+          revision?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_onboarding_drafts_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_onboarding_drafts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_onboarding_drafts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "property_onboarding_drafts_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
           },
         ]
       }
@@ -42008,6 +42120,10 @@ export type Database = {
         Returns: Json
       }
       property_edit_snapshot: { Args: { p_property_id: string }; Returns: Json }
+      property_onboarding_draft: {
+        Args: { p_actor_id: string; p_input?: Json; p_property_id: string }
+        Returns: Json
+      }
       property_unit_current: { Args: { p_id: string }; Returns: Json }
       property_unit_decision_finish: {
         Args: {
@@ -44283,6 +44399,10 @@ export type Database = {
         Args: { p_description?: string; p_name: string; p_secret: string }
         Returns: string
       }
+      sync_property_setup_tasks: {
+        Args: { p_actor_id?: string; p_property_id: string }
+        Returns: undefined
+      }
       team_admin_current: {
         Args: { p_actor_id: string; p_org_id: string }
         Returns: boolean
@@ -44459,6 +44579,7 @@ export type Database = {
         Args: { p_id: string; p_result_hash: string }
         Returns: Json
       }
+      validate_onboarding_intake: { Args: { v: Json }; Returns: undefined }
       validate_property_unit_data: { Args: { p_data: Json }; Returns: boolean }
     }
     Enums: {

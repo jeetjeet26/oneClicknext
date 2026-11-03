@@ -1,4 +1,5 @@
 import type { PropertyContext } from '@/types/siteforge'
+import { publicContactFromProperty } from '@/utils/property-setup/intake'
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -18,11 +19,7 @@ export function propertyContextFromOnboardingSnapshot(
   const address = record(property.address)
   const assets = Array.isArray(snapshot.assets) ? snapshot.assets.map(record) : []
   const units = Array.isArray(snapshot.units) ? snapshot.units.map(record) : []
-  const contacts = Array.isArray(snapshot.contacts)
-    ? snapshot.contacts.map(record)
-    : []
-  const primaryContact =
-    contacts.find((contact) => contact.is_primary === true) || contacts[0] || {}
+  const publicContact = publicContactFromProperty(property)
   const socialMedia = record(property.social_media)
 
   const id = string(property.id)
@@ -39,10 +36,10 @@ export function propertyContextFromOnboardingSnapshot(
       city: string(address.city) || '',
       state: string(address.state) || '',
       zip: string(address.zip || address.postalCode),
-      country: string(address.country) || 'USA',
+      country: string(address.country) || '',
     },
-    phone: string(primaryContact.phone),
-    email: string(primaryContact.email),
+    phone: string(publicContact?.phone),
+    email: string(publicContact?.email),
     socialLinks: Object.fromEntries(
       Object.entries(socialMedia).flatMap(([platform, url]) => {
         const normalizedUrl = string(url)
