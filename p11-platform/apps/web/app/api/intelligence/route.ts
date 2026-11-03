@@ -13,6 +13,7 @@ import { createServiceClient } from "@/utils/supabase/admin";
 import { InventoryError } from "@/utils/knowledge/inventory";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { propertyIdSchema } from "@/utils/property-setup/contracts";
 import {
   commandSchema,
   dateRange,
@@ -60,11 +61,11 @@ export async function GET(req: NextRequest) {
           range.start,
           range.end,
           false,
-          z.string().uuid().parse(p.get("propertyId")),
+          propertyIdSchema.parse(p.get("propertyId")),
         ),
       );
     }
-    const id = z.string().uuid().parse(p.get("propertyId"));
+    const id = propertyIdSchema.parse(p.get("propertyId"));
     await intelligenceActor(id);
     if (kind === "direction") {
       const db = createServiceClient();
@@ -141,7 +142,9 @@ export async function GET(req: NextRequest) {
       {
         error:
           e instanceof z.ZodError
-            ? "Review the dates and property."
+            ? req.nextUrl.searchParams.get("kind") === "portfolio"
+              ? "Review the date range and selected property."
+              : "Choose a valid property to load its records."
             : e instanceof IntelligenceError || e instanceof InventoryError
               ? e.message
               : "This view could not be loaded.",
@@ -165,7 +168,7 @@ export async function POST(req: NextRequest) {
           question: z.string().min(1).max(2000),
           start: z.string(),
           end: z.string(),
-          propertyId: z.string().uuid(),
+          propertyId: propertyIdSchema,
         })
         .strict()
         .parse(body);
@@ -182,7 +185,7 @@ export async function POST(req: NextRequest) {
       const q = z
         .object({
           action: z.literal("retrieve"),
-          propertyId: z.string().uuid(),
+          propertyId: propertyIdSchema,
           provider: z.enum(enabledProviders),
           start: z.string(),
           end: z.string(),

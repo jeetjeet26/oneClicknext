@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { calendarDate } from "@/utils/delivery/contracts";
+import { propertyIdSchema } from "@/utils/property-setup/contracts";
 const text = z.string().trim().max(8000);
 const label = z.string().trim().min(1).max(200);
 const url = z
@@ -298,7 +299,7 @@ export const payloadSchemas = {
 export const commandSchema = z
   .object({
     requestId: z.string().uuid(),
-    propertyId: z.string().uuid(),
+    propertyId: propertyIdSchema,
     kind: z.enum(documentKinds),
     key: z.string().regex(/^[a-zA-Z0-9_.:-]{1,160}$/),
     expectedRevision: z.number().int().nonnegative(),

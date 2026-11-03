@@ -1,7 +1,6 @@
 import {
   Activity,
   BarChart3,
-  BedDouble,
   Bot,
   Building2,
   ClipboardList,
@@ -40,13 +39,7 @@ export const navigationGroups = [
         href: "/dashboard/community",
         label: "Community knowledge",
         icon: Building2,
-        description: "Property facts, sources, brand and assets",
-      },
-      {
-        href: "/dashboard/floor-plans",
-        label: "Floorplans",
-        icon: BedDouble,
-        description: "Floorplans and availability",
+        description: "Property facts, floor plans, sources, brand and assets",
       },
     ],
   },

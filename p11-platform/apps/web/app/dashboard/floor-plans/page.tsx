@@ -1,5 +1,5 @@
-import { ManualFloorPlansConsole } from '@/components/siteforge/ManualFloorPlansConsole'
+import { redirect } from 'next/navigation'
 
 export default function FloorPlansPage() {
-  return <ManualFloorPlansConsole />
+  redirect('/dashboard/community?section=floorplans')
 }

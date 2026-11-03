@@ -1,4 +1,4 @@
-// schema_migration_version: 20261030210846
+// schema_migration_version: 20261103220309
 export type Json =
   | string
   | number
@@ -16169,6 +16169,74 @@ export type Database = {
           },
         ]
       }
+      luma_model_allowance_settlements: {
+        Row: {
+          allowance_after: number
+          allowance_before: number
+          bucket: string
+          charged_units: number
+          created_at: string
+          model_id: string
+          property_id: string
+          released_units: number
+          reserved_units: number
+          response_hash: string
+        }
+        Insert: {
+          allowance_after: number
+          allowance_before: number
+          bucket: string
+          charged_units: number
+          created_at?: string
+          model_id: string
+          property_id: string
+          released_units: number
+          reserved_units: number
+          response_hash: string
+        }
+        Update: {
+          allowance_after?: number
+          allowance_before?: number
+          bucket?: string
+          charged_units?: number
+          created_at?: string
+          model_id?: string
+          property_id?: string
+          released_units?: number
+          reserved_units?: number
+          response_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "luma_model_allowance_settlements_model_id_fkey"
+            columns: ["model_id"]
+            isOneToOne: true
+            referencedRelation: "luma_model_intents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "luma_model_allowance_settlements_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "luma_model_allowance_settlements_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_import_status"
+            referencedColumns: ["property_id"]
+          },
+          {
+            foreignKeyName: "luma_model_allowance_settlements_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "vw_property_marketing_setup"
+            referencedColumns: ["property_id"]
+          },
+        ]
+      }
       luma_model_intents: {
         Row: {
           created_at: string
@@ -16177,6 +16245,7 @@ export type Database = {
           property_id: string
           purpose: string
           request_id: string
+          reservation_bucket: string | null
           reserved_units: number
           source: Json
         }
@@ -16187,6 +16256,7 @@ export type Database = {
           property_id: string
           purpose: string
           request_id: string
+          reservation_bucket?: string | null
           reserved_units: number
           source: Json
         }
@@ -16197,6 +16267,7 @@ export type Database = {
           property_id?: string
           purpose?: string
           request_id?: string
+          reservation_bucket?: string | null
           reserved_units?: number
           source?: Json
         }
@@ -44276,6 +44347,14 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      settle_luma_model_allowance: {
+        Args: {
+          p_model_id: string
+          p_property_id: string
+          p_reviewed_bucket?: string
+        }
+        Returns: Json
       }
       settle_shared_execution_budget_v2: {
         Args: {

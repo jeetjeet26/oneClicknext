@@ -1,7 +1,8 @@
 'use client'
 
+import Image from 'next/image'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Archive, BedDouble, Loader2, Plus, RefreshCw, Save } from 'lucide-react'
+import { Archive, Loader2, Plus, RefreshCw, Save } from 'lucide-react'
 import { usePropertyContext } from '@/components/layout/PropertyContext'
 import {
   InventoryRevisionPreview,
@@ -17,6 +18,7 @@ type Draft = {
   rent: string
   availableCount: string
   imageUrl: string
+  imageAssetId: string
   availabilityUrl: string
   applyUrl: string
   specials: string
@@ -55,6 +57,7 @@ const blankDraft = (): Draft => ({
   rent: '',
   availableCount: '',
   imageUrl: '',
+  imageAssetId: '',
   availabilityUrl: '',
   applyUrl: '',
   specials: '',
@@ -80,13 +83,15 @@ function numberOrUndefined(value: string): number | undefined {
   return value.trim() === '' ? undefined : Number(value)
 }
 
-export function ManualFloorPlansConsole() {
+export function ManualFloorPlansConsole({ onSaved }: { onSaved?: () => void }) {
   const { currentProperty, loading: propertyLoading } = usePropertyContext()
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [websites, setWebsites] = useState<Website[]>([])
   const [websiteId, setWebsiteId] = useState('')
   const [loading, setLoading] = useState(true)
+  const [uploading, setUploading] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [loadFailed, setLoadFailed] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null)
@@ -95,6 +100,7 @@ export function ManualFloorPlansConsole() {
   const load = useCallback(async () => {
     if (!currentProperty?.id) return
     setLoading(true)
+    setLoadFailed(false)
     setError(null)
     try {
       const response = await fetch(
@@ -112,6 +118,7 @@ export function ManualFloorPlansConsole() {
         rent: String(unit.rent_min ?? ''),
         availableCount: String(unit.available_count ?? ''),
         imageUrl: String(unit.floor_plan_image_url || ''),
+        imageAssetId: String(unit.floor_plan_image_asset_id || ''),
         availabilityUrl: String(unit.availability_url || ''),
         applyUrl: String(unit.apply_url || ''),
         specials: String(unit.move_in_specials || ''),
@@ -128,6 +135,7 @@ export function ManualFloorPlansConsole() {
       setImportPreview(null)
       setRevisionPreview(null)
     } catch (cause) {
+      setLoadFailed(true)
       setError(cause instanceof Error ? cause.message : 'Failed to load floor plans')
     } finally {
       setLoading(false)
@@ -156,6 +164,7 @@ export function ManualFloorPlansConsole() {
     rentMax: numberOrUndefined(row.rent),
     availableCount: numberOrUndefined(row.availableCount),
     imageUrl: row.imageUrl || undefined,
+    imageAssetId: row.imageAssetId || undefined,
     imageAlt: row.imageUrl ? `${row.name || 'Floor plan'} floor plan` : undefined,
     availabilityUrl: row.availabilityUrl || undefined,
     applyUrl: row.applyUrl || undefined,
@@ -163,6 +172,36 @@ export function ManualFloorPlansConsole() {
     effectiveAt: isoOrUndefined(row.effectiveAt),
     expiresAt: isoOrUndefined(row.expiresAt),
   })), [drafts])
+
+  async function uploadImage(key: string, file?: File) {
+    if (!file) return
+    setError(null)
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 20 * 1024 * 1024) {
+      setError('Choose a JPG, PNG or WebP image, up to 20 MB.')
+      return
+    }
+    setUploading(key)
+    setImportPreview(null)
+    setRevisionPreview(null)
+    setNotice(null)
+    try {
+      const form = new FormData()
+      form.set('propertyId', currentProperty.id)
+      form.set('category', 'floorplan')
+      form.set('file', file)
+      form.set('altText', `${drafts.find(row => row.key === key)?.name || 'Floor plan'} layout`)
+      const response = await fetch('/api/siteforge/assets', { method: 'POST', body: form })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error || 'Image upload failed. Please try again.')
+      if (!body.asset?.url || !body.asset?.id) throw new Error('The upload did not return an image. Please try again.')
+      setDrafts(rows => rows.map(row => row.key === key ? { ...row, imageUrl: body.asset.url, imageAssetId: body.asset.id } : row))
+      setNotice('Image uploaded. Review and save the floor plan to attach it.')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Image upload failed. Please try again.')
+    } finally {
+      setUploading(null)
+    }
+  }
 
   async function previewChanges() {
     setBusy(true)
@@ -209,6 +248,7 @@ export function ManualFloorPlansConsole() {
       if (!response.ok) throw new Error(body.error || 'Confirmation failed')
       setNotice(`Saved ${body.applied} floor plan row(s).`)
       await load()
+      onSaved?.()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Confirmation failed')
     } finally {
@@ -269,34 +309,32 @@ export function ManualFloorPlansConsole() {
     return <div className="flex min-h-64 items-center justify-center"><Loader2 className="animate-spin text-indigo-600" /></div>
   }
 
+  if (loadFailed) {
+    return <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+      <p>Floor plan editing could not be loaded: {error}</p>
+      <button type="button" onClick={() => void load()} className="mt-2 underline">Retry loading floor plan editing</button>
+    </div>
+  }
+
   return (
     <div className="mx-auto max-w-7xl space-y-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900">
-          <BedDouble className="text-indigo-600" /> Floorplans &amp; Availability
-        </h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Manually maintain approved inventory for {currentProperty.name}, then preview the exact SiteForge block before publishing.
-        </p>
-      </div>
-
       {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
       {notice && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">{notice}</div>}
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="font-semibold text-slate-900">Manual inventory</h2>
-            <p className="text-sm text-slate-500">Archive removes a plan from the next confirmed inventory snapshot.</p>
+            <h2 className="font-semibold text-slate-900">Upload and edit floor plans</h2>
+            <p className="text-sm text-slate-500">Add your real floorplan images and details. Review changes, then save to update this community.</p>
           </div>
-          <button type="button" onClick={() => setDrafts((rows) => [...rows, blankDraft()])} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          <button type="button" disabled={busy || !!uploading} onClick={() => { setDrafts((rows) => [...rows, blankDraft()]); setImportPreview(null); setRevisionPreview(null); setNotice(null) }} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
             <Plus size={16} /> Add floor plan
           </button>
         </div>
 
         <div className="space-y-4">
           {drafts.map((row) => (
-            <fieldset key={row.key} className="grid gap-3 rounded-lg border border-slate-200 p-4 md:grid-cols-4">
+            <fieldset disabled={busy || !!uploading} key={row.key} className="grid gap-3 rounded-lg border border-slate-200 p-4 md:grid-cols-4">
               <legend className="px-2 text-sm font-medium text-slate-700">{row.name || 'New floor plan'}</legend>
               <Field label="Name" value={row.name} required onChange={(value) => update(row.key, 'name', value)} />
               <Field label="Beds" value={row.bedrooms} type="number" required onChange={(value) => update(row.key, 'bedrooms', value)} />
@@ -304,7 +342,15 @@ export function ManualFloorPlansConsole() {
               <Field label="Square feet" value={row.sqft} type="number" onChange={(value) => update(row.key, 'sqft', value)} />
               <Field label="Monthly rent" value={row.rent} type="number" onChange={(value) => update(row.key, 'rent', value)} />
               <Field label="Available count" value={row.availableCount} type="number" onChange={(value) => update(row.key, 'availableCount', value)} />
-              <Field label="Image URL" value={row.imageUrl} type="url" onChange={(value) => update(row.key, 'imageUrl', value)} />
+              <div className="space-y-2 md:col-span-4">
+                <label className="block text-sm font-medium text-slate-700">
+                  Floorplan image
+                  <input type="file" accept="image/jpeg,image/png,image/webp" disabled={busy || !!uploading} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadImage(row.key, file) }} className="mt-2 block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-4 file:py-2 file:font-medium file:text-indigo-700" />
+                </label>
+                <p className="text-xs text-slate-500">Upload a JPG, PNG or WebP image, up to 20 MB.</p>
+                {uploading === row.key && <p role="status" className="text-sm text-indigo-700">Uploading floorplan image…</p>}
+                {row.imageUrl && <Image src={row.imageUrl} alt={`${row.name || 'Floor plan'} layout`} width={640} height={480} unoptimized className="max-h-64 w-auto max-w-full rounded-lg border border-slate-200 object-contain" />}
+              </div>
               <Field label="Availability URL" value={row.availabilityUrl} type="url" onChange={(value) => update(row.key, 'availabilityUrl', value)} />
               <Field label="Apply URL" value={row.applyUrl} type="url" onChange={(value) => update(row.key, 'applyUrl', value)} />
               <Field label="Effective" value={row.effectiveAt} type="datetime-local" onChange={(value) => update(row.key, 'effectiveAt', value)} />
@@ -314,30 +360,29 @@ export function ManualFloorPlansConsole() {
                 <textarea value={row.specials} onChange={(event) => update(row.key, 'specials', event.target.value)} maxLength={2000} rows={2} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal" />
               </label>
               <div className="flex items-end justify-end">
-                <button type="button" onClick={() => { setDrafts((rows) => rows.filter((item) => item.key !== row.key)); setImportPreview(null) }} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50">
+                <button type="button" disabled={busy || !!uploading} onClick={() => { setDrafts((rows) => rows.filter((item) => item.key !== row.key)); setImportPreview(null) }} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50">
                   <Archive size={16} /> Archive
                 </button>
               </div>
             </fieldset>
           ))}
-          <a className="inline-block py-2 text-sm font-medium text-indigo-700 underline" href="/dashboard/community?section=knowledge&unitReview=1">Review imported floor plans in Community knowledge →</a>
-          {!drafts.length && <p className="rounded-lg bg-slate-50 p-6 text-center text-sm text-slate-500">No active manual floor plans. Add a plan below or review floor plans imported through community knowledge. If you just removed the last plan, preview and confirm to save that removal.</p>}
+          {!drafts.length && <p className="rounded-lg bg-slate-50 p-6 text-center text-sm text-slate-500">Choose Add floor plan to upload an image and enter its details. Imported plans are listed below.</p>}
         </div>
 
         <div className="mt-5 flex flex-wrap gap-3">
-          <button disabled={busy} onClick={previewChanges} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-            <Save size={16} /> Validate &amp; preview changes
+          <button disabled={busy || !!uploading} onClick={previewChanges} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+            <Save size={16} /> Review changes
           </button>
           {importPreview?.canConfirm && (
-            <button disabled={busy} onClick={confirmChanges} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-              Confirm manual inventory
+            <button disabled={busy || !!uploading} onClick={confirmChanges} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+              Save floor plans
             </button>
           )}
         </div>
 
         {importPreview && (
           <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
-            <p className="font-medium text-slate-800">{importPreview.rows.length} validated row(s)</p>
+            <p className="font-medium text-slate-800">{importPreview.rows.length} floor plan(s) ready to save</p>
             {importPreview.errors.map((item) => <p key={`${item.row}:${item.field}:${item.message}`} className="mt-1 text-red-600">Row {item.row}{item.field ? ` · ${item.field}` : ''}: {item.message}</p>)}
           </div>
         )}
@@ -354,7 +399,7 @@ export function ManualFloorPlansConsole() {
                 {websites.map((website) => <option key={website.id} value={website.id}>{website.id} · {website.generation_status || 'unknown'}</option>)}
               </select>
             </label>
-            <button disabled={busy || !websiteId} onClick={previewWebsiteRefresh} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+            <button disabled={busy || !!uploading || !websiteId} onClick={previewWebsiteRefresh} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
               <RefreshCw size={16} /> Build exact website preview
             </button>
           </div>
@@ -366,7 +411,7 @@ export function ManualFloorPlansConsole() {
               Review all {revisionPreview.changedBlockCount} affected block(s). Publishing requires these exact artifact and inventory hashes.
             </div>
             <InventoryRevisionPreview blocks={revisionPreview.blocks} />
-            <button disabled={busy} onClick={publishWebsiteRefresh} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+            <button disabled={busy || !!uploading} onClick={publishWebsiteRefresh} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
               Publish this exact inventory-only revision
             </button>
           </div>

@@ -2,6 +2,7 @@ import { requireTeamOrigin, teamBody } from "@/utils/team/http";
 import { InventoryError } from "@/utils/knowledge/inventory";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { propertyIdSchema } from "@/utils/property-setup/contracts";
 import {
   intelligenceActor,
   IntelligenceError,
@@ -12,7 +13,7 @@ export async function POST(req: NextRequest) {
     requireTeamOrigin(req);
     const input = z
       .object({
-        propertyId: z.string().uuid(),
+        propertyId: propertyIdSchema,
         source: z.string().min(1).max(200),
         account: z.string().min(1).max(200),
         content: z.string(),

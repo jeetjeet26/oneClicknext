@@ -34,6 +34,6 @@ export function KnowledgeSourcesList({ propertyId, onRefresh }: Props) {
     <div hidden={section !== 'files'}><KnowledgeFilesWorkbench key={propertyId} propertyId={propertyId}/></div>
     <div hidden={section !== 'text'}><KnowledgeWorkbench key={propertyId} propertyId={propertyId} onChange={onRefresh}/></div>
     <WorkspaceDisclosure open={params.has('knowledgeGroup')} title="Source inventory and history" description="Saved versions and search preparation details"><KnowledgeInventory key={propertyId} propertyId={propertyId}/></WorkspaceDisclosure>
-    <button className="console-action" type="button" onClick={() => { const section = document.getElementById('property-units-review'); const disclosure = section?.closest('details'); if (disclosure) disclosure.open = true; section?.scrollIntoView({behavior:'smooth'}); }}>Review imported floor plans</button>
+    <button className="console-action" type="button" onClick={() => { const url = new URL(window.location.href); url.search = '?section=floorplans'; window.history.pushState(null, '', url); }}>Manage floor plans and availability</button>
   </section>
 }

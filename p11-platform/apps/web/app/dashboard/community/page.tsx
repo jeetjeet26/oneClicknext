@@ -1,5 +1,6 @@
 'use client'
 
+import { ManualFloorPlansConsole } from '@/components/siteforge/ManualFloorPlansConsole'
 import { useSearchParams } from 'next/navigation'
 import { ReviewedRecordsWorkspace } from '@/components/intelligence/ReviewedRecordsWorkspace'
 import { CommunityBrainWorkspace } from '@/components/community-brain/CommunityBrainWorkspace'
@@ -20,6 +21,7 @@ import { SiteForgeReadinessCard } from '@/components/community/SiteForgeReadines
 import { OnboardingTruthEditor } from '@/components/community/OnboardingTruthEditor'
 import {
   Building2,
+  BedDouble,
   BookOpen,
   ClipboardCheck,
   RefreshCw,
@@ -27,7 +29,7 @@ import {
   AlertCircle
 } from 'lucide-react'
 
-type Tab = 'overview' | 'facts' | 'knowledge' | 'files' | 'checklist'
+type Tab = 'overview' | 'facts' | 'knowledge' | 'files' | 'checklist' | 'floorplans'
 
 async function extractFetchError(response: Response, fallback: string): Promise<string> {
   try {
@@ -45,13 +47,14 @@ function PropertyDashboardPage() {
   const { currentProperty } = usePropertyContext()
   const query = useSearchParams()
   const section = query.get('section')
-  const activeTab: Tab = section === 'facts' || section === 'knowledge' || section === 'files' || section === 'checklist' ? section : ['knowledgeGroup', 'knowledgeFile', 'knowledgeSource', 'assistantFactVersion', 'unitReview', 'knowledgeCapture'].some(key => query.has(key)) ? 'knowledge' : 'overview'
+  const activeTab: Tab = query.has('unitReview') ? 'floorplans' : section === 'floorplans' ? 'floorplans' : section === 'facts' || section === 'knowledge' || section === 'files' || section === 'checklist' ? section : ['knowledgeGroup', 'knowledgeFile', 'knowledgeSource', 'assistantFactVersion', 'unitReview', 'knowledgeCapture'].some(key => query.has(key)) ? 'knowledge' : 'overview'
   function setActiveTab(tab: Tab) {
     const url = new URL(window.location.href)
     url.search = ''
     url.searchParams.set('section', tab)
     window.history.pushState(null, '', url)
   }
+  const [floorPlanRevision, setFloorPlanRevision] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   
@@ -145,6 +148,7 @@ function PropertyDashboardPage() {
   const tabs = [
     { id: 'overview' as Tab, label: 'Overview', icon: Building2 },
     { id: 'facts' as Tab, label: 'Facts', icon: ClipboardCheck },
+    { id: 'floorplans' as Tab, label: 'Floor plans', icon: BedDouble },
     { id: 'knowledge' as Tab, label: 'Sources', icon: BookOpen },
     { id: 'files' as Tab, label: 'Files & assets', icon: BookOpen },
     { id: 'checklist' as Tab, label: 'Onboarding', icon: ClipboardCheck },
@@ -217,7 +221,7 @@ function PropertyDashboardPage() {
           {activeTab === 'overview' && (
             <div className="space-y-6">
               <div className="workspace-steps">
-                {[['facts', 'Community facts', 'Review the information used in content and conversations.'], ['knowledge', 'Sources to review', 'Check websites, documents and written knowledge.'], ['files', 'Files and assets', 'Manage original files, images and approved assets.']].map(([id, title, description]) => <button type="button" key={id} onClick={() => setActiveTab(id as Tab)} className="console-panel p-5 text-left hover:border-orange-300"><h2 className="text-lg font-semibold">{title}</h2><p className="mt-2 text-sm text-slate-600">{description}</p><span className="mt-4 block text-sm font-medium text-[#a53212]">Open →</span></button>)}
+                {[['facts', 'Community facts', 'Review the information used in content and conversations.'], ['floorplans', 'Floor plans', 'Upload floorplan images and manage pricing and availability.'], ['knowledge', 'Sources to review', 'Check websites, documents and written knowledge.'], ['files', 'Files and assets', 'Manage original files, images and approved assets.']].map(([id, title, description]) => <button type="button" key={id} onClick={() => setActiveTab(id as Tab)} className="console-panel p-5 text-left hover:border-orange-300"><h2 className="text-lg font-semibold">{title}</h2><p className="mt-2 text-sm text-slate-600">{description}</p><span className="mt-4 block text-sm font-medium text-[#a53212]">Open →</span></button>)}
               </div>
               <PropertyControls key={currentProperty.id} propertyId={currentProperty.id} />
               {/* Property Profile Card */}
@@ -227,7 +231,7 @@ function PropertyDashboardPage() {
                 onUpdate={() => fetchData()}
               />
 
-              <details className="workspace-disclosure"><summary>Contacts and data connections</summary><div className="workspace-disclosure-body">
+              <details id="property-connections" open={query.get('setupPanel') === 'connections'} className="workspace-disclosure"><summary>Contacts and data connections</summary><div className="workspace-disclosure-body">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Contacts */}
                 <ContactsManager
@@ -259,6 +263,13 @@ function PropertyDashboardPage() {
 
           {activeTab === 'facts' && <ReviewedRecordsWorkspace key={currentProperty.id} propertyId={currentProperty.id} propertyName={currentProperty.name} mode="facts" />}
           {activeTab === 'files' && <CommunityBrainWorkspace key={currentProperty.id} propertyId={currentProperty.id} propertyName={currentProperty.name} />}
+          {activeTab === 'floorplans' && (
+            <div className="space-y-6">
+              <div><h2 className="text-xl font-semibold">Floor plans</h2><p className="mt-1 text-sm text-slate-600">Upload your floorplan images, enter the details, then review and save. Manage imported plans below.</p></div>
+              <ManualFloorPlansConsole key={currentProperty.id} onSaved={() => setFloorPlanRevision(value => value + 1)} />
+              <PropertyUnitsCard key={`${currentProperty.id}:${floorPlanRevision}`} propertyId={currentProperty.id} units={propertyUnits} allowCreate={false} />
+            </div>
+          )}
           {/* Knowledge Base Tab */}
           {activeTab === 'knowledge' && (
             <div className="space-y-6">
@@ -278,13 +289,7 @@ function PropertyDashboardPage() {
 
               <details open={query.has('assistantFactVersion')} className="rounded-xl border border-slate-200 bg-white p-5"><summary className="cursor-pointer font-medium">Chatbot publication and retained facts history</summary><p className="my-3 text-sm text-slate-600">Review the chatbot’s published snapshot and its source versions. Maintain current property information in Approved facts and property setup.</p><ChatbotContextStatusCard propertyId={currentProperty?.id || ''} /></details>
 
-              {/* Property Units & Pricing */}
-              <details open={query.has('unitReview')} className="workspace-disclosure"><summary>Imported floor plans and pricing</summary><div className="workspace-disclosure-body">
-              <PropertyUnitsCard
-                units={propertyUnits}
-                propertyId={currentProperty?.id || ''}
-              />
-              </div></details>
+
 
             </div>
           )}
