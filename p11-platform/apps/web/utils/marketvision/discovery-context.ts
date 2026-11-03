@@ -42,10 +42,12 @@ export function discoveryContext(context: GenerationContext, setup?: {special_fe
     if (!e.allowedUses.includes('fact') || competitorEvidence(e.metadata)) return []
     return [...e.content.matchAll(/^Known competitor:\s*(.{1,200})$/gmi)].map(m => m[1].trim())
   })).slice(0, 5)
+  // Bound the complete signal, including its field label, to the service contract.
+  const boundedSignals = signals.slice(0, 30).map(signal => ({...signal, text: signal.text.slice(0, 2000)}))
   return {
-    property_id: context.propertyId, context_hash: createHash('sha256').update(JSON.stringify({recipe: 'community-discovery-v1', community: context.contextHash, signals: signals.slice(0, 30), knownCompetitors})).digest('hex'),
+    property_id: context.propertyId, context_hash: createHash('sha256').update(JSON.stringify({recipe: 'community-discovery-v1', community: context.contextHash, signals: boundedSignals, knownCompetitors})).digest('hex'),
     property_type: String(property.property_type ?? property.propertyType ?? ''),
-    signals: signals.slice(0, 30), known_competitors: knownCompetitors,
+    signals: boundedSignals, known_competitors: knownCompetitors,
     known_competitor_source_ids: context.canonical.facts.filter(fact => /competitor/i.test(String(fact.key))).map(fact => `fact:${fact.id}`).slice(0, 5),
     avg_rent: rents.length ? rents.reduce((a,b) => a+b,0)/rents.length : null,
     amenities: Array.isArray(property.amenities) ? property.amenities.filter((a): a is string => typeof a === 'string').slice(0, 100) : [],

@@ -32,3 +32,12 @@ it('fingerprints the selected setup hints along with the reviewed knowledge',()=
  expect(first.context_hash).toMatch(/^[a-f0-9]{64}$/)
  expect(first.context_hash).not.toBe(second.context_hash)
 })
+it('keeps long reviewed facts within the discovery service limit including the field label',()=>{
+ const context=fixture()
+ context.canonical.facts.push({id:'long',key:'features_detail',payload:{value:'Independent living. '+ 'x'.repeat(2034)}} as unknown as typeof context.canonical.facts[number])
+ const result=discoveryContext(context)
+ const signal=result.signals.find(s=>s.id==='fact:long')!
+ expect(signal.text).toHaveLength(2000)
+ expect(signal.text).toMatch(/^features_detail: Independent living/)
+ expect(result.signals.every(s=>s.text.length<=2000)).toBe(true)
+})
