@@ -13,7 +13,7 @@ import logging
 import requests
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
-from datetime import datetime
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class SerpApiReview:
     reviewer_avatar_url: Optional[str]
     rating: int
     review_text: str
-    review_date: str
+    review_date: Optional[str]
     relative_time: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
@@ -78,77 +78,47 @@ class SerpApiReviewsScraper:
             Dict with reviews and metadata
         """
         reviews = []
-        next_page_token = None
+        seen_ids = set()
+        seen_tokens = set()
         place_info = {}
-        
-        logger.info(f"[SerpAPI] Fetching reviews for place: {place_id}")
-        
+        params = {
+            "engine": "google_maps_reviews", "place_id": place_id,
+            "api_key": self.api_key, "hl": "en", "sort_by": sort_by, "num": 20,
+        }
+        next_token = None
         try:
             while len(reviews) < max_reviews:
-                # Build request params
-                params = {
-                    "engine": "google_maps_reviews",
-                    "place_id": place_id,
-                    "api_key": self.api_key,
-                    "hl": "en",  # Language
-                    "sort_by": sort_by,
-                }
-                
-                if next_page_token:
-                    params["next_page_token"] = next_page_token
-                
-                # Make request
-                response = requests.get(SERPAPI_BASE_URL, params=params, timeout=30)
+                response = requests.get(SERPAPI_BASE_URL, params=params, timeout=25)
                 response.raise_for_status()
                 data = response.json()
-                
-                # Check for errors
-                if "error" in data:
-                    logger.error(f"[SerpAPI] Error: {data['error']}")
-                    break
-                
-                # Extract place info (first page only)
-                if not place_info and "place_info" in data:
-                    place_info = data["place_info"]
-                    logger.info(f"[SerpAPI] Place: {place_info.get('title', 'Unknown')} - {place_info.get('reviews', 0)} total reviews")
-                
-                # Extract reviews
-                page_reviews = data.get("reviews", [])
-                if not page_reviews:
-                    logger.info("[SerpAPI] No more reviews found")
-                    break
-                
-                for review_data in page_reviews:
-                    if len(reviews) >= max_reviews:
-                        break
-                    
-                    review = self._parse_review(review_data, place_id)
-                    if review:
+                if data.get("error") or not isinstance(data.get("reviews"), list):
+                    raise ValueError("Invalid reviews response")
+                if not place_info:
+                    place_info = data.get("place_info") or {}
+                previous_count = len(reviews)
+                for item in data["reviews"]:
+                    review = self._parse_review(item, place_id)
+                    if not review:
+                        raise ValueError("Missing review identity")
+                    if review.platform_review_id not in seen_ids:
+                        seen_ids.add(review.platform_review_id)
                         reviews.append(review)
-                
-                logger.info(f"[SerpAPI] Fetched {len(reviews)} reviews so far...")
-                
-                # Check for next page
-                next_page_token = data.get("serpapi_pagination", {}).get("next_page_token")
-                if not next_page_token:
-                    logger.info("[SerpAPI] No more pages")
+                    if len(reviews) == max_reviews:
+                        break
+                next_token = (data.get("serpapi_pagination") or {}).get("next_page_token")
+                if not next_token:
                     break
-                    
-        except requests.exceptions.RequestException as e:
-            logger.error(f"[SerpAPI] Request error: {e}")
-            return {
-                'success': False,
-                'error': str(e),
-                'reviews': [r.to_dict() for r in reviews]
-            }
-        except Exception as e:
-            logger.error(f"[SerpAPI] Error: {e}")
-            return {
-                'success': False,
-                'error': str(e),
-                'reviews': [r.to_dict() for r in reviews]
-            }
-        
+                if next_token in seen_tokens or previous_count == len(reviews):
+                    raise ValueError("Pagination stalled")
+                seen_tokens.add(next_token)
+                params["next_page_token"] = next_token
+        except (requests.RequestException, ValueError, TypeError, AttributeError):
+            # Request exceptions can contain the private API key in their URL.
+            return {"success": False, "error": "SerpAPI could not retrieve the review pages.", "reviews": []}
+
+        total = place_info.get("reviews")
+        complete = total == len(reviews) and not next_token
+        coverage = f"{len(reviews)} of {total}" if isinstance(total, int) else str(len(reviews))
         return {
             'success': True,
             'place_id': place_id,
@@ -159,14 +129,17 @@ class SerpApiReviewsScraper:
             'reviews': [r.to_dict() for r in reviews],
             'reviews_fetched': len(reviews),
             'method': 'serpapi',
-            'note': f'Retrieved {len(reviews)} reviews via SerpAPI'
+            'completeness': 'complete' if complete else 'degraded',
+            'note': f'SerpAPI returned {coverage} Google reviews.'
         }
     
     def _parse_review(self, data: Dict[str, Any], place_id: str) -> Optional[SerpApiReview]:
         """Parse a review from SerpAPI response"""
         try:
             # Generate unique ID
-            review_id = data.get('review_id') or f"serp-{place_id}-{hash(str(data))}"
+            review_id = data.get('review_id')
+            if not review_id:
+                return None
             
             # Get user info
             user = data.get('user', {})
@@ -174,15 +147,13 @@ class SerpApiReviewsScraper:
             avatar_url = user.get('thumbnail')
             
             # Get rating
-            rating = data.get('rating', 0)
+            rating = data.get('rating')
             
             # Get review text (snippet or full)
-            review_text = data.get('snippet', '') or data.get('extracted_snippet', {}).get('original', '')
+            review_text = (data.get('extracted_snippet') or {}).get('original') or data.get('snippet') or ''
             
             # Get date
-            review_date = data.get('iso_date') or data.get('date', '')
-            if not review_date:
-                review_date = datetime.utcnow().isoformat()
+            review_date = data.get('iso_date')
             
             relative_time = data.get('date')  # e.g., "2 weeks ago"
             
@@ -203,29 +174,3 @@ class SerpApiReviewsScraper:
 def is_serpapi_configured() -> bool:
     """Check if SerpAPI is configured"""
     return bool(os.environ.get('SERPAPI_API_KEY'))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
