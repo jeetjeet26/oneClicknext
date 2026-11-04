@@ -12,6 +12,7 @@ p11-platform/apps/web/utils/reviewflow/ingestion.ts. Every response reports:
 Authentication: DATA_ENGINE_API_KEY and a matching Bearer token are required.
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -120,6 +121,22 @@ async def google_reviews_full(
     Falls back to the Places API (degraded) when Playwright is unavailable.
     """
     verify_service_key(authorization)
+
+    from scrapers.serpapi_reviews import SerpApiReviewsScraper, is_serpapi_configured
+
+    if is_serpapi_configured():
+        result = await asyncio.to_thread(
+            SerpApiReviewsScraper().get_reviews, request.place_id, request.max_reviews
+        )
+        if not result["success"]:
+            raise HTTPException(status_code=502, detail=result["error"])
+        return ReviewsResponse(
+            success=True,
+            reviews=[_to_observed(raw) for raw in result["reviews"]],
+            retrieval_method="provider_api",
+            completeness=result["completeness"],
+            note=result["note"],
+        )
 
     from scrapers.google_places import PLAYWRIGHT_AVAILABLE
 
