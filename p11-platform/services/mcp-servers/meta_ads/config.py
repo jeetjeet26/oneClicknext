@@ -22,7 +22,7 @@ META_APP_ID = os.environ.get("META_APP_ID")
 META_APP_SECRET = os.environ.get("META_APP_SECRET")
 
 # API Version
-META_API_VERSION = "v19.0"
+META_API_VERSION = "v26.0"
 META_BASE_URL = f"https://graph.facebook.com/{META_API_VERSION}"
 
 # Supabase

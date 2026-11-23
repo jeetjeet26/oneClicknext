@@ -1,3 +1,4 @@
+import { propertyIdSchema } from '@/utils/property-setup/contracts'
 import {NextRequest,NextResponse} from 'next/server'
 import {z} from 'zod'
 import {createClient} from '@/utils/supabase/server'
@@ -6,7 +7,7 @@ import {validatePropertyManagerAccess} from '@/utils/services/auth-guard'
 import {CONFIG_PLATFORMS,socialCredentialStorageReady,encryptSecret,secretFingerprint,socialRpc} from '@/utils/forgestudio/social-security'
 import {hasEnvironmentSocialConfig} from '@/utils/forgestudio/social-config'
 import {ContentStoreError} from '@/utils/forgestudio/content-store'
-const scope=z.object({propertyId:z.string().uuid(),platform:z.enum(CONFIG_PLATFORMS).default('meta')})
+const scope=z.object({propertyId:propertyIdSchema,platform:z.enum(CONFIG_PLATFORMS).default('meta')})
 const write=scope.extend({requestId:z.string().uuid(),expectedVersion:z.number().int().nonnegative(),action:z.enum(['save','disable']),appId:z.string().trim().min(1).max(256).optional(),appSecret:z.string().min(1).max(4096).optional()}).strict().refine(v=>v.action==='disable'||!!v.appId&&!!v.appSecret)
 export async function GET(request:NextRequest){
  try{

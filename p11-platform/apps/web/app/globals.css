@@ -57,29 +57,29 @@
 }
 
 .dark {
-  --background: #0f172a;
-  --foreground: #f1f5f9;
-  --card: #1e293b;
-  --card-foreground: #f8fafc;
-  --popover: #1e293b;
-  --popover-foreground: #f8fafc;
-  --primary: #818cf8;
-  --primary-foreground: #111827;
-  --secondary: #334155;
-  --secondary-foreground: #f8fafc;
-  --muted: #334155;
-  --muted-foreground: #cbd5e1;
-  --accent: #3730a3;
-  --accent-foreground: #eef2ff;
+  --background: #161616;
+  --foreground: #eee;
+  --card: #232323;
+  --card-foreground: #fafafa;
+  --popover: #232323;
+  --popover-foreground: #fafafa;
+  --primary: #ff906a;
+  --primary-foreground: #24120c;
+  --secondary: #303030;
+  --secondary-foreground: #fafafa;
+  --muted: #303030;
+  --muted-foreground: #c4c4c4;
+  --accent: #412920;
+  --accent-foreground: #ffc5af;
   --destructive: #f87171;
   --destructive-foreground: #450a0a;
   --success: #34d399;
   --success-foreground: #022c22;
   --warning: #fbbf24;
   --warning-foreground: #451a03;
-  --border: #475569;
-  --input: #64748b;
-  --ring: #a5b4fc;
+  --border: #484848;
+  --input: #777;
+  --ring: #ff9a77;
 }
 
 body {
@@ -255,9 +255,14 @@ textarea:-webkit-autofill:active {
 .console-field { display:block; width:100%; border:1px solid #dededb; border-radius:8px; background:#fff; padding:11px 12px; color:#343434; }
 @media(max-width:1023px) { .console-header { min-height:66px; padding:12px 20px; } .console-main { padding:22px 20px; } .console-sidebar { border-right:0; border-bottom:1px solid var(--console-line); } }
 @media(max-width:639px) { .console-main { padding:20px 16px; } .console-header { padding:10px 16px; gap:8px; } .console-location { display:none; } .console-property-switcher { max-width:230px; } .console-panel-heading { padding:19px; } .console-metric { padding:19px; } .console-metric-value { font-size:29px; } }
-.dark .console-shell { --console-line:#35414e; --console-ink:#e3eaf0; --console-quiet:#a8b5c0; background:#17212b; }
-.dark .console-sidebar,.dark .console-header,.dark .console-mobile-panel,.dark .console-panel,.dark .console-metric { background:#202d38; color:#e3eaf0; border-color:#35414e; }
-.dark .console-nav-link { color:#aebdc8; } .dark .console-nav-link.is-active { background:#324751;color:#dfedf0; } .dark .console-workspace-label,.dark .console-property-switcher { background:#283843;border-color:#40515b;color:#b8c7d0; }
+.dark .console-shell { color-scheme:dark; --console-line:var(--border); --console-ink:var(--foreground); --console-quiet:var(--muted-foreground); background:var(--background); }
+.dark :is(.console-sidebar,.console-header,.console-mobile-panel,.console-panel,.console-metric,.workspace-tabs,.workspace-disclosure,.workspace-stat,.console-action:not(.console-action-primary)) { background:var(--card); color:var(--foreground); border-color:var(--border); }
+.dark :is(.console-workspace-label,.console-property-switcher,.console-icon-tile,.console-field,.market-observation,.console-table th,.console-tag) { background:var(--muted); color:var(--foreground); border-color:var(--border); }
+.dark :is(.console-brand-caption,.console-location,.console-location strong,.console-nav-link,.console-nav-link svg,.console-sidebar-footer p,.console-nav-group h2,.console-muted,.console-kicker,.console-empty,.console-empty strong,.console-table td,.console-panel-heading p,.workspace-disclosure-description,.workspace-stat dt,.workspace-stat p,.console-mobile-navigation summary,.workspace-tabs a,.workspace-tabs button) { color:var(--muted-foreground); }
+.dark :is(.console-nav-link:hover,.workspace-tabs a:hover,.workspace-tabs button:hover,.console-icon-button:hover) { background:var(--muted);color:var(--foreground); }
+.dark .console-nav-link.is-active,.dark .workspace-tabs [aria-current=page],.dark .workspace-tabs [aria-pressed=true] { background:var(--accent);color:var(--accent-foreground); }
+.dark .console-nav-link.is-active svg { color:inherit; }
+
 
 .portal-header { display:flex; align-items:center; gap:30px; padding:24px max(28px,calc((100vw - 1320px)/2)); min-height:95px; border-bottom:1px solid #e6e6e3; background:#fff; }
 .portal-nav { display:flex; flex-wrap:wrap; gap:7px; margin:auto; }
@@ -326,7 +331,7 @@ textarea:-webkit-autofill:active {
 .console-mobile-navigation summary .p11-logo-mobile { width:29px; height:29px; margin-left:auto; }
 .console-brand strong { font-family:var(--font-p11-heading),var(--font-geist-sans),sans-serif; font-weight:600; letter-spacing:-.45px; }
 .console-main h1,.portal-page-heading h1,.auth-surface h1,.auth-surface h2,.console-shell>section>h1 { font-family:var(--font-p11-heading),var(--font-geist-sans),sans-serif; font-weight:600; }
-.console-nav-link.is-active { box-shadow:inset 2px 0 #fa4616; }
+
 .portal-nav a.is-active { box-shadow:inset 0 -2px #fa4616; }
 .auth-surface { --ring:#c33510; }
 .dark .console-sidebar .p11-logo { color:#f5f5f4; }
@@ -382,3 +387,27 @@ textarea:-webkit-autofill:active {
 .portal-results-nav { max-width: 1280px; margin: 20px auto 0; padding: 0 24px; }
 .portal-results-nav a { display: inline-flex; align-items: center; min-height: 44px; padding: 10px 16px; border-radius: 8px; color: #5b5652; font-size: 14px; }
 .portal-results-nav a[aria-current="page"] { background: #fff0e8; color: #a53212; font-weight: 600; }
+
+/* The native select covers its label, padding and chevron on touch and desktop. */
+.console-shell select:not([multiple]):not([size]):not(.appearance-none) {
+  appearance:none;
+  padding-inline-end:2.5rem;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%236c6c6c' stroke-width='1.7'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;
+  background-position:right .8rem center;
+}
+.console-shell label.console-property-switcher { position:relative; display:block; width:clamp(7rem,25vw,18.75rem); padding:0; }
+.console-property-caption { position:absolute; top:3px; left:12px; font-size:11px; color:var(--muted-foreground); pointer-events:none; }
+.console-shell .console-property-switcher select { display:block; height:44px; border-radius:inherit; padding:15px 2.5rem 2px 12px; background-color:transparent; color:var(--foreground); cursor:pointer; }
+.console-property-switcher select:disabled { cursor:default; }
+.console-property-switcher option { background:var(--card); color:var(--foreground); }
+.console-header button[aria-label="Search console"] { height:46px; }
+.console-icon-tile { background:var(--muted); color:var(--primary); border-color:var(--border); }
+.console-main .animate-spin:is(.text-blue-500,.text-blue-600,.text-indigo-500,.text-indigo-600) { color:var(--primary); }
+.console-main .animate-spin:is(.border-blue-500,.border-indigo-500,.border-indigo-600) { border-color:var(--primary); border-top-color:transparent; }
+.console-shell .console-loading-mark { width:36px; height:36px; color:var(--primary); }
+.console-shell { font-family:"Area Normal","Area",var(--font-geist-sans),sans-serif; }
+.console-shell .console-brand strong, .console-shell h1 { font-family:"Area Normal","Area",var(--font-p11-heading),sans-serif; }
+.dark .console-main :is(button,a):is(.bg-indigo-600,.bg-violet-600,.bg-purple-600) { color:var(--primary-foreground); }
+.dark .console-shell input:-webkit-autofill { -webkit-box-shadow:0 0 0 1000px var(--card) inset !important; -webkit-text-fill-color:var(--foreground) !important; caret-color:var(--foreground) !important; }
+@media(forced-colors:active) { .console-shell select:not([multiple]):not([size]):not(.appearance-none) { appearance:auto;background-image:none; } }

@@ -24,7 +24,14 @@ export const chatMessageSchema = z.object({
   content: safeString(5000),
 }).strict()
 
+const campaignValue = safeString(200).trim().min(1).optional()
+const visitorCampaign = z.object({
+  source: campaignValue, medium: campaignValue, campaign: campaignValue,
+  term: campaignValue, content: campaignValue,
+}).strict().refine(value => Object.values(value).some(Boolean)).optional()
+
 export const chatRequestSchema = z.object({
+  attribution: visitorCampaign,
   requestId: z.string().uuid().optional(),
   // The public client is only authoritative for its newest user turn.
   // Conversation history is rebuilt from the property-scoped server session.
@@ -83,6 +90,8 @@ export const leadPulseScoreRequestSchema = z.object({
 // ─── LumaLeasing Tour Booking ─────────────────────────────────────────────
 
 export const tourBookingSchema = z.object({
+  smsMarketingOptIn: z.literal(true).optional(),
+  attribution: visitorCampaign,
   requestId: z.string().uuid().optional(),
   slotId: safeString(100).optional().nullable(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD').optional(),
@@ -105,6 +114,9 @@ export const tourBookingSchema = z.object({
   sessionId: safeString(100).optional().nullable(),
   conversationId: safeString(100).optional().nullable(),
 }).superRefine((data, ctx) => {
+  if (data.smsMarketingOptIn && !/^[1-9]\d{7,14}$/.test(data.leadInfo.phone.replace(/\D/g,''))) {
+    ctx.addIssue({code:'custom', path:['leadInfo','phone'], message:'Enter a mobile number for marketing texts.'})
+  }
   const effectiveDate = data.tourDate || data.date
   const effectiveTime = data.tourTime || data.time
 
@@ -120,6 +132,7 @@ export const tourBookingSchema = z.object({
 // ─── LumaLeasing Lead Capture ─────────────────────────────────────────────
 
 export const leadCaptureSchema = z.object({
+  attribution: visitorCampaign,
   requestId: z.string().uuid().optional(),
   // Support both direct fields and leadInfo wrapper
   leadInfo: z.object({

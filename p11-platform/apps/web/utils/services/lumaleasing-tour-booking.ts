@@ -57,6 +57,7 @@ export interface BookLumaLeasingTourParams {
   durationMinutes?: number
   specialRequests?: string | null
   source: TourBookingSource
+  attribution?: Record<string, string | undefined>
   attributionMetadata?: Record<string, unknown>
   conversationId?: string | null
   slot?: TourBookingSlot | null
@@ -264,7 +265,7 @@ export async function bookLumaLeasingTour(
     p_property_id:propertyId,p_lead_id:leadId,
     p_booking:{slot_id:slot?.id ?? null,scheduled_date:bookingDate,scheduled_time:bookingTime,
       duration_minutes:durationMinutes,special_requests:specialRequests ?? null,source,
-      booked_via_conversation_id:conversationId ?? null},
+      ...(params.attribution && {attribution:params.attribution}), booked_via_conversation_id:conversationId ?? null},
     p_delivery:{propertyName,propertyAddress:propertyAddress ?? '',leadInfo,
       calendarId:calendarConfig.id,providerCalendarId:calendarConfig.calendar_id,provider:calendarConfig.provider,
       bookingDate,bookingTime,durationMinutes,timezone:calendarConfig.timezone,startsAt,

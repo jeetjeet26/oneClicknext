@@ -23,3 +23,15 @@ describe('asset library API',()=>{
  it('recovers stored bytes with an attributed explicit decision',async()=>{const body={requestId,propertyId:property,uploadId:asset,action:'keep_separate',reason:'Keep the stored file and review the original separately'};expect((await(await import('./route')).PATCH(request(body))).status).toBe(200);expect(recover).toHaveBeenCalledWith({...body,actorId:'actual-user'})})
  it('pending uploads are scoped to the requesting operator',async()=>{await(await import('./route')).GET(new Request(`http://localhost/api/forgestudio/assets?mode=uploads&propertyId=${property}`) as NextRequest);expect(chain.eq).toHaveBeenCalledWith('actor_id','actual-user');expect(chain.eq).toHaveBeenCalledWith('state','prepared')})
 })
+
+it('reads assets for the seeded Aurora property only after property authorization', async () => {
+  const propertyId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  const { GET } = await import('./route')
+  const get = (id: string) => GET(new Request('http://localhost/api/forgestudio/assets?propertyId='+id) as NextRequest)
+  expect((await get(propertyId)).status).toBe(200)
+  expect(access).toHaveBeenCalledWith('actual-user',propertyId)
+  expect(chain.eq).toHaveBeenCalledWith('property_id',propertyId)
+  access.mockResolvedValue({authorized:false})
+  expect((await get(propertyId)).status).toBe(403)
+  expect((await get('not-a-property')).status).toBe(400)
+})

@@ -1,7 +1,6 @@
 'use client';
 
 import React from 'react';
-import { ChevronDown } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { usePropertyContext } from './PropertyContext';
 
@@ -19,12 +18,11 @@ export function PropertySwitcher() {
   if (pathname === "/dashboard/portfolio") return <span className="console-property-switcher text-sm font-medium">Portfolio · choose communities below</span>;
 
   return (
-    <div className="console-property-switcher min-w-0">
-      <div className="flex min-w-0 flex-col">
-        <span className="text-xs text-slate-500">Property</span>
+    <label className="console-property-switcher min-w-0">
+        <span aria-hidden="true" className="console-property-caption">Property</span>
         <select
           aria-label="Property"
-          className="min-w-0 w-full truncate text-sm font-medium text-slate-900 bg-transparent focus-visible:outline-2 focus-visible:outline-indigo-600"
+          className="min-w-0 w-full truncate text-sm font-medium"
           value={currentProperty.id}
           onChange={(e) => setProperty(e.target.value)}
           disabled={loading || isSwitchingProperty || properties.length === 0}
@@ -40,9 +38,7 @@ export function PropertySwitcher() {
               </option>
             ))}
         </select>
-      </div>
-      <ChevronDown size={14} aria-hidden="true" className="shrink-0 text-slate-500" />
-    </div>
+    </label>
   );
 }
 

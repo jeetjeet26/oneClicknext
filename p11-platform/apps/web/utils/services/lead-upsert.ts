@@ -26,6 +26,7 @@ export interface UpsertLeadByContactInput {
   propertyId: string
   email?: string | null
   phone?: string | null
+  smsMarketingOptIn?: true
   existingLeadId?: string | null
   create: Omit<LeadInsert, 'property_id'>
   update: LeadUpdate
@@ -159,7 +160,7 @@ export async function upsertLeadByContact(
   if (String(input.create.source).startsWith('LumaLeasing')) {
     const result = await phaseFourDb(input.client).rpc('upsert_luma_lead', {
       p_property_id:input.propertyId,p_email:input.email ?? null,p_phone:input.phone ?? null,
-      p_existing_id:input.existingLeadId ?? null,p_create:input.create as Json,p_update:input.update as Json,
+      p_existing_id:input.existingLeadId ?? null,p_create:{...input.create, ...(input.smsMarketingOptIn && {smsMarketingOptIn:true})} as Json,p_update:input.update as Json,
       p_activity:input.repeatActivity ? input.repeatActivity as unknown as Json : null,
     })
     if (result.error || !result.data) throw new LeadUpsertError('Could not confirm saved lead and follow-up handoff',result.error?.code)

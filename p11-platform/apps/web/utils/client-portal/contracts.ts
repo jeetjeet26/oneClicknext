@@ -1,3 +1,4 @@
+import { propertyIdSchema } from '@/utils/property-setup/contracts'
 import type { BiReport } from "@/utils/analytics/report-data";
 import type { Funnel, Goal, ReportEvidence } from "@/utils/delivery/contracts";
 import { z } from "zod";
@@ -5,7 +6,7 @@ import { productSelection, legacyPortalProducts, type PortalProduct } from "./pr
 export const id = z.string().uuid();
 export const portalQuery = z
   .object({
-    propertyId: id.optional(),
+    propertyId: propertyIdSchema.optional(),
     days: z.coerce
       .number()
       .pipe(z.union([z.literal(7), z.literal(30), z.literal(90)]))
@@ -14,7 +15,7 @@ export const portalQuery = z
   })
   .strict();
 const properties = z
-  .array(id)
+  .array(propertyIdSchema)
   .min(1)
   .max(100)
   .refine((p) => new Set(p).size === p.length);

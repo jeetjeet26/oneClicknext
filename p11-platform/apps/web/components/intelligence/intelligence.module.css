@@ -1,34 +1,15 @@
-/* P11's requested understated light canvas, including when the host uses dark mode. */
 .surface {
-  background: #f7f7f6 !important;
-  color: #222 !important;
-  color-scheme: light;
-  --console-line: #e6e6e3;
-  --console-ink: #222;
-  --console-quiet: #656565;
-  --primary: #a53212;
-  --primary-foreground: #fff;
+  background: var(--background);
+  color: var(--foreground);
 }
-.surface :global(.console-panel) {
-  background: #fff !important;
-  color: #222 !important;
-  border-color: #e6e6e3 !important;
+:global(.dark) .surface :is(:global(.bg-white), :global(.bg-gray-50), :global(.bg-slate-50)) {
+  background-color: var(--card);
 }
-.surface :global(.console-brand),
-.surface :global(.portal-account) {
-  color: #222;
+:global(.dark) .surface :is(:global(.text-gray-900), :global(.text-gray-800), :global(.text-slate-900)) {
+  color: var(--foreground);
 }
-.surface :global(.console-action-primary) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 44px;
-  padding: 10px 16px;
-  border-radius: 8px;
-  background: #a53212;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 500;
+:global(.dark) .surface :is(:global(.text-gray-600), :global(.text-gray-500), :global(.text-slate-600)) {
+  color: var(--muted-foreground);
 }
 .surface :global(.console-action-primary:disabled) {
   opacity: 0.55;

@@ -34596,6 +34596,7 @@ export type Database = {
       }
       tour_bookings: {
         Row: {
+          attribution: Json
           booked_via_conversation_id: string | null
           completed_at: string | null
           completion_notes: string | null
@@ -34620,6 +34621,7 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          attribution?: Json
           booked_via_conversation_id?: string | null
           completed_at?: string | null
           completion_notes?: string | null
@@ -34644,6 +34646,7 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          attribution?: Json
           booked_via_conversation_id?: string | null
           completed_at?: string | null
           completion_notes?: string | null
@@ -43196,6 +43199,10 @@ export type Database = {
           p_version: number
         }
         Returns: string
+      }
+      record_workflow_sms_optout: {
+        Args: { p_sender: string; p_recipient: string }
+        Returns: undefined
       }
       record_tour_outcome: {
         Args: {

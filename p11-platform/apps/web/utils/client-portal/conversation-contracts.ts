@@ -1,9 +1,10 @@
+import { propertyIdSchema } from '@/utils/property-setup/contracts'
 import { z } from "zod";
 import { id, type PortalProperty } from "./contracts";
 
 export const clientConversationQuery = z
   .object({
-    propertyId: id.optional(),
+    propertyId: propertyIdSchema.optional(),
     days: z.enum(["7", "30", "90", "all"]).default("all"),
     offset: z.coerce.number().int().min(0).max(100000).default(0),
     conversationId: id.optional(),

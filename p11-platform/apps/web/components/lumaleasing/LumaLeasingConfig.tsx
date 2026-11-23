@@ -10,6 +10,7 @@ import {
   UserPlus, Calendar, Code, Loader2,
   Sparkles, CheckCircle, AlertCircle, Mail, XCircle, Wrench
 } from 'lucide-react';
+import { WidgetAppearancePreview } from './WidgetAppearancePreview';
 import { usePropertyContext } from '../layout/PropertyContext';
 
 interface WidgetConfig {
@@ -100,7 +101,8 @@ const TIMEZONES = [
   'America/Phoenix',
 ];
 
-export function LumaLeasingConfig() {
+export function LumaLeasingConfig({ initiallyPreview = false }: { initiallyPreview?: boolean }) {
+  const [preview, setPreview] = useState(initiallyPreview);
   const { currentProperty } = usePropertyContext();
   const [config, setConfig] = useState<WidgetConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -509,7 +511,7 @@ export function LumaLeasingConfig() {
     return (
       <div className="text-center py-12">
         <Sparkles className="w-12 h-12 mx-auto text-gray-300 mb-4" />
-        <h3 className="text-lg font-medium text-gray-900">LumaLeasing Not Configured</h3>
+        <h3 className="text-lg font-medium text-foreground">LumaLeasing Not Configured</h3>
         {saveError&&<p role="alert" className="mt-3 text-red-700">{saveError}</p>}
         {saveConflict&&<button type="button" onClick={()=>void loadConfig()} className="mt-3 underline">Load latest settings</button>}
         <p className="text-gray-500 mt-2">Click below to set up LumaLeasing for this property.</p>
@@ -526,25 +528,25 @@ export function LumaLeasingConfig() {
 
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200">
+    <div className="bg-card rounded-xl shadow-sm border border-border">
       {/* Header */}
-      <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+      <div className="p-6 border-b border-slate-100 flex flex-wrap gap-3 items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white">
-            <Sparkles className="w-5 h-5" />
+          <div className="h-10 w-10 rounded-xl bg-primary flex items-center justify-center text-primary-foreground">
+            <MessageSquare className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">LumaLeasing Configuration</h2>
-            <p className="text-sm text-slate-500">{currentProperty.name}</p>
+            <h2 className="text-lg font-semibold text-foreground">LumaLeasing Configuration</h2>
+            <p className="text-sm text-muted-foreground">{currentProperty.name}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => window.open(`/lumaleasing/demo?apiKey=${config.api_key}`, '_blank', 'noopener,noreferrer')}
+            aria-expanded={preview} aria-controls="widget-appearance-preview" onClick={() => setPreview(!preview)}
             className="flex items-center gap-2 px-4 py-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
           >
             <Eye className="w-4 h-4" />
-            Preview
+            {preview ? 'Hide widget preview' : 'Preview widget'}
           </button>
           <button
             onClick={()=>void saveConfig()}
@@ -557,11 +559,12 @@ export function LumaLeasingConfig() {
         </div>
       </div>
 
+      {preview && <WidgetAppearancePreview config={config} />}
       {!canManage&&<p className="mx-6 text-sm text-slate-600">A property manager or administrator can save widget settings.</p>}
       {saveError&&<div role="alert" className="mx-6 rounded-lg bg-red-50 p-3 text-sm text-red-700"><p>{saveError}</p>{saveConflict&&<button type="button" onClick={()=>void loadConfig()} className="mt-2 underline">Load latest settings</button>}</div>}
       {dirty&&<p className="mx-6 text-sm text-amber-700">Unsaved changes</p>}
       {saveMessage&&<p role="status" className="mx-6 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{saveMessage}</p>}
-      <p className="mx-6 text-xs text-slate-500">Saving tour settings also updates connected calendars. Previously saved tours keep their recorded timezone.</p>
+      <p className="mx-6 text-xs text-muted-foreground">Saving tour settings also updates connected calendars. Previously saved tours keep their recorded timezone.</p>
       {/* Tabs */}
       <div className="border-b border-slate-100">
         <div className="flex">
@@ -578,7 +581,7 @@ export function LumaLeasingConfig() {
               className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === id
                   ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-slate-500 hover:text-slate-700'
+                  : 'border-transparent text-muted-foreground hover:text-slate-700'
               }`}
             >
               <Icon className="w-4 h-4" />
@@ -600,9 +603,9 @@ export function LumaLeasingConfig() {
                 aria-label="Widget name"
                 value={config.widget_name}
                 onChange={(e) => updateConfig('widget_name', e.target.value)}
-                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                className="w-full px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               />
-              <p className="text-xs text-slate-500 mt-1">This name appears in the chat header</p>
+              <p className="text-xs text-muted-foreground mt-1">This name appears in the chat header</p>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -613,13 +616,13 @@ export function LumaLeasingConfig() {
                     type="color"
                     value={config.primary_color}
                     onChange={(e) => updateConfig('primary_color', e.target.value)}
-                    className="w-10 h-10 rounded border border-slate-200 cursor-pointer"
+                    className="w-10 h-10 rounded border border-border cursor-pointer"
                   />
                   <input
                     type="text"
                     value={config.primary_color}
                     onChange={(e) => updateConfig('primary_color', e.target.value)}
-                    className="flex-1 px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    className="flex-1 px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                   />
                 </div>
               </div>
@@ -630,13 +633,13 @@ export function LumaLeasingConfig() {
                     type="color"
                     value={config.secondary_color}
                     onChange={(e) => updateConfig('secondary_color', e.target.value)}
-                    className="w-10 h-10 rounded border border-slate-200 cursor-pointer"
+                    className="w-10 h-10 rounded border border-border cursor-pointer"
                   />
                   <input
                     type="text"
                     value={config.secondary_color}
                     onChange={(e) => updateConfig('secondary_color', e.target.value)}
-                    className="flex-1 px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    className="flex-1 px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                   />
                 </div>
               </div>
@@ -667,10 +670,10 @@ export function LumaLeasingConfig() {
                       value={config.logo_url || ''}
                       onChange={(e) => updateConfig('logo_url', e.target.value || null)}
                       placeholder="https://example.com/logo.png"
-                      className="flex-1 px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                      className="flex-1 px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                     />
                   </div>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-muted-foreground">
                     Paste an image URL and save settings, or choose a reviewed library image below.
                   </p>
                 </div>
@@ -700,9 +703,9 @@ export function LumaLeasingConfig() {
                     value={config.agent_avatar_url || ''}
                     onChange={(e) => updateConfig('agent_avatar_url', e.target.value || null)}
                     placeholder="https://example.com/agent-photo.jpg"
-                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    className="w-full px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                   />
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-muted-foreground">
                     Shown as the assistant&apos;s avatar next to chat replies and on the teaser
                     bubble, giving the widget a human face. Square headshots work best. Leave
                     blank to use the default bot icon.
@@ -713,8 +716,8 @@ export function LumaLeasingConfig() {
 
             <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
               <div>
-                <p className="font-medium text-slate-900">Widget Status</p>
-                <p className="text-sm text-slate-500">Enable or disable the widget</p>
+                <p className="font-medium text-foreground">Widget Status</p>
+                <p className="text-sm text-muted-foreground">Enable or disable the widget</p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input
@@ -723,7 +726,7 @@ export function LumaLeasingConfig() {
                   onChange={(e) => updateConfig('is_active', e.target.checked)}
                   className="sr-only peer"
                 />
-                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
               </label>
             </div>
           </div>
@@ -738,7 +741,7 @@ export function LumaLeasingConfig() {
                 value={config.welcome_message}
                 onChange={(e) => updateConfig('welcome_message', e.target.value)}
                 rows={3}
-                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                className="w-full px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               />
             </div>
 
@@ -748,9 +751,9 @@ export function LumaLeasingConfig() {
                 value={config.offline_message}
                 onChange={(e) => updateConfig('offline_message', e.target.value)}
                 rows={2}
-                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                className="w-full px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               />
-              <p className="text-xs text-slate-500 mt-1">Shown when outside business hours</p>
+              <p className="text-xs text-muted-foreground mt-1">Shown when outside business hours</p>
             </div>
 
             <div>
@@ -760,9 +763,9 @@ export function LumaLeasingConfig() {
                 value={config.floor_plans_url || ''}
                 onChange={(e) => updateConfig('floor_plans_url', e.target.value || null)}
                 placeholder="https://example.com/communities/floor-plans/"
-                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                className="w-full px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               />
-              <p className="text-xs text-slate-500 mt-1">The chatbot shares this link when visitors ask about floor plans</p>
+              <p className="text-xs text-muted-foreground mt-1">The chatbot shares this link when visitors ask about floor plans</p>
             </div>
 
             <div>
@@ -772,9 +775,9 @@ export function LumaLeasingConfig() {
                 value={config.availability_url || ''}
                 onChange={(e) => updateConfig('availability_url', e.target.value || null)}
                 placeholder="https://example.com/communities/site-plan/"
-                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                className="w-full px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               />
-              <p className="text-xs text-slate-500 mt-1">The chatbot shares this link when visitors ask about availability</p>
+              <p className="text-xs text-muted-foreground mt-1">The chatbot shares this link when visitors ask about availability</p>
             </div>
 
             <div>
@@ -784,9 +787,9 @@ export function LumaLeasingConfig() {
                 value={config.auto_popup_delay_seconds}
                 onChange={(e) => updateConfig('auto_popup_delay_seconds', parseInt(e.target.value) || 0)}
                 min={0}
-                className="w-32 px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                className="w-32 px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               />
-              <p className="text-xs text-slate-500 mt-1">After this delay, a small message bubble invites the visitor to chat (instead of auto-opening the window). Set to 0 to disable.</p>
+              <p className="text-xs text-muted-foreground mt-1">After this delay, a small message bubble invites the visitor to chat (instead of auto-opening the window). Set to 0 to disable.</p>
             </div>
 
             <div>
@@ -809,14 +812,14 @@ export function LumaLeasingConfig() {
                           type="time"
                           value={config.business_hours[day]?.start || '09:00'}
                           onChange={(e) => updateBusinessHours(day, 'start', e.target.value)}
-                          className="px-3 py-1 border border-slate-200 rounded text-sm"
+                          className="px-3 py-1 border border-border rounded text-sm"
                         />
-                        <span className="text-slate-500">to</span>
+                        <span className="text-muted-foreground">to</span>
                         <input
                           type="time"
                           value={config.business_hours[day]?.end || '18:00'}
                           onChange={(e) => updateBusinessHours(day, 'end', e.target.value)}
-                          className="px-3 py-1 border border-slate-200 rounded text-sm"
+                          className="px-3 py-1 border border-border rounded text-sm"
                         />
                       </>
                     )}
@@ -831,7 +834,7 @@ export function LumaLeasingConfig() {
                 aria-label="Scheduling timezone"
                 value={config.timezone||''}
                 onChange={(e) => updateConfig('timezone', e.target.value)}
-                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                className="w-full px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               >
                 <option value="">Choose property timezone</option>
                 {[...new Set([...(config.timezone?[config.timezone]:[]),...TIMEZONES])].map((tz) => (
@@ -854,21 +857,21 @@ export function LumaLeasingConfig() {
                   </div>
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Email Inbox Integration</h3>
+                  <h3 className="text-lg font-semibold text-foreground mb-2">Email Inbox Integration</h3>
                   <p className="text-sm text-slate-600 mb-4">
                     Connect Gmail or Outlook to sync inbound lead replies and keep thread lifecycle states visible for leasing follow-up.
                   </p>
 
                   {emailLoading ? <p role="status" className="text-sm text-slate-600">Loading email connection…</p> : emailError ? <div role="alert" className="text-sm text-red-700"><p>{emailError}</p><button type="button" onClick={()=>void loadEmailStatus()} className="mt-2 underline">Retry email status</button></div> : emailStatus && emailStatus.state !== 'disconnected' ? (
                     <div className="space-y-3">
-                      <div className="flex items-center gap-2 text-sm bg-white/60 rounded-lg p-3">
+                      <div className="flex items-center gap-2 text-sm bg-card/60 rounded-lg p-3">
                       {emailStatus.state === 'reconnect_required' ? (
                           <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
                         ) : (
                           <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0" />
                         )}
                         <div>
-                          <div className="font-medium text-slate-900">{emailStatus.email}</div>
+                          <div className="font-medium text-foreground">{emailStatus.email}</div>
                           <div className="text-xs text-slate-600">
                             Provider:{' '}
                             <span className="font-medium">
@@ -911,28 +914,28 @@ export function LumaLeasingConfig() {
                       </div>
 
                       <div className="grid grid-cols-3 gap-3">
-                        <div className="rounded-lg bg-white/70 p-3 border border-emerald-100">
-                          <p className="text-xs text-slate-500">Awaiting Internal Reply</p>
-                          <p className="text-lg font-semibold text-slate-900">
+                        <div className="rounded-lg bg-card/70 p-3 border border-emerald-100">
+                          <p className="text-xs text-muted-foreground">Awaiting Internal Reply</p>
+                          <p className="text-lg font-semibold text-foreground">
                             {emailStatus.thread_lifecycle?.awaiting_internal_reply || 0}
                           </p>
                         </div>
-                        <div className="rounded-lg bg-white/70 p-3 border border-amber-100">
-                          <p className="text-xs text-slate-500">Overdue Internal Reply</p>
+                        <div className="rounded-lg bg-card/70 p-3 border border-amber-100">
+                          <p className="text-xs text-muted-foreground">Overdue Internal Reply</p>
                           <p className="text-lg font-semibold text-amber-700">
                             {emailStatus.thread_lifecycle?.awaiting_internal_reply_overdue || 0}
                           </p>
                         </div>
-                        <div className="rounded-lg bg-white/70 p-3 border border-emerald-100">
-                          <p className="text-xs text-slate-500">Awaiting Lead Reply</p>
-                          <p className="text-lg font-semibold text-slate-900">
+                        <div className="rounded-lg bg-card/70 p-3 border border-emerald-100">
+                          <p className="text-xs text-muted-foreground">Awaiting Lead Reply</p>
+                          <p className="text-lg font-semibold text-foreground">
                             {emailStatus.thread_lifecycle?.awaiting_lead_reply || 0}
                           </p>
                         </div>
                       </div>
 
                       {(emailStatus.pending_threads_preview || []).length > 0 && (
-                        <div className="rounded-lg bg-white/70 p-3 border border-emerald-100">
+                        <div className="rounded-lg bg-card/70 p-3 border border-emerald-100">
                           <p className="text-xs font-medium text-slate-700 mb-2">Pending Thread Preview</p>
                           <div className="space-y-2">
                             {(emailStatus.pending_threads_preview || []).slice(0, 5).map((thread) => (
@@ -941,7 +944,7 @@ export function LumaLeasingConfig() {
                                   <p className="text-xs font-medium text-slate-800 truncate">
                                     {thread.subject || 'No subject'}
                                   </p>
-                                  <p className="text-[11px] text-slate-500">
+                                  <p className="text-[11px] text-muted-foreground">
                                     {thread.status || 'unknown'} • {thread.message_count || 0} messages
                                     {thread.overdue && thread.overdue_days
                                       ? ` • overdue ${thread.overdue_days}d`
@@ -965,7 +968,7 @@ export function LumaLeasingConfig() {
                         <button
                           onClick={repairThreadLifecycle}
                           disabled={repairingThreads}
-                          className="flex items-center gap-2 bg-white text-slate-900 px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-medium disabled:opacity-60"
+                          className="flex items-center gap-2 bg-card text-foreground px-4 py-2 rounded-lg border border-border hover:bg-slate-50 transition-colors text-sm font-medium disabled:opacity-60"
                         >
                           <Wrench className={`w-4 h-4 ${repairingThreads ? 'animate-spin' : ''}`} />
                           {repairingThreads
@@ -1002,7 +1005,7 @@ export function LumaLeasingConfig() {
                       <button
                         onClick={() => disconnectIntegration('email')}
                         disabled={disconnectingIntegration === 'email'}
-                        className="flex items-center gap-2 bg-white text-red-700 px-4 py-2 rounded-lg border border-red-200 hover:bg-red-50 transition-colors text-sm font-medium disabled:opacity-60"
+                        className="flex items-center gap-2 bg-card text-red-700 px-4 py-2 rounded-lg border border-red-200 hover:bg-red-50 transition-colors text-sm font-medium disabled:opacity-60"
                       >
                         <XCircle className="w-4 h-4" />
                         {disconnectingIntegration === 'email' ? 'Removing...' : 'Remove Email Account'}
@@ -1038,7 +1041,7 @@ export function LumaLeasingConfig() {
                 value={config.lead_capture_prompt}
                 onChange={(e) => updateConfig('lead_capture_prompt', e.target.value)}
                 rows={2}
-                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                className="w-full px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               />
             </div>
 
@@ -1059,7 +1062,7 @@ export function LumaLeasingConfig() {
                       onChange={(e) => updateConfig(key, e.target.checked)}
                       className="sr-only peer"
                     />
-                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
                   </label>
                 </div>
               ))}
@@ -1067,7 +1070,7 @@ export function LumaLeasingConfig() {
               <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
                 <div>
                   <p className="text-slate-700">Require Email Before Chat</p>
-                  <p className="text-xs text-slate-500">User must provide email to start chatting</p>
+                  <p className="text-xs text-muted-foreground">User must provide email to start chatting</p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
@@ -1076,7 +1079,7 @@ export function LumaLeasingConfig() {
                     onChange={(e) => updateConfig('require_email_before_chat', e.target.checked)}
                     className="sr-only peer"
                   />
-                  <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                  <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
                 </label>
               </div>
             </div>
@@ -1095,7 +1098,7 @@ export function LumaLeasingConfig() {
                   </div>
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Calendar Integration</h3>
+                  <h3 className="text-lg font-semibold text-foreground mb-2">Calendar Integration</h3>
                   <p className="text-sm text-slate-600 mb-4">
                     Connect Google Calendar or Outlook Calendar to show real-time availability in the widget.
                     Tours will automatically appear in your calendar.
@@ -1103,14 +1106,14 @@ export function LumaLeasingConfig() {
                   
                   {calendarLoading ? <p role="status" className="text-sm text-slate-600">Loading calendar status…</p> : calendarError ? <div role="alert" className="text-sm text-red-700"><p>{calendarError}</p><button type="button" onClick={()=>void loadCalendarStatus()} className="mt-2 underline">Retry calendar status</button></div> : calendarStatus && calendarStatus.state !== 'disconnected' ? (
                     <div className="space-y-3">
-                      <div className="flex items-center gap-2 text-sm bg-white/50 rounded-lg p-3">
+                      <div className="flex items-center gap-2 text-sm bg-card/50 rounded-lg p-3">
                         {calendarStatus.state !== 'connected' ? (
                           <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
                         ) : (
                           <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0" />
                         )}
                         <div>
-                          <div className="font-medium text-slate-900">{calendarStatus.email}</div>
+                          <div className="font-medium text-foreground">{calendarStatus.email}</div>
                           <div className="text-xs text-slate-600">
                             Provider:{' '}
                             <span className="font-medium">
@@ -1155,16 +1158,16 @@ export function LumaLeasingConfig() {
                       {calendarStatus.timezone_setup_required && <PropertyTimezoneSetup key={currentProperty.id} propertyId={currentProperty.id} onSaved={() => void loadCalendarStatus()}/>}
                       {calendarStatus.calendar_sync && (
                         <div className="grid grid-cols-2 gap-3">
-                          <div className="rounded-lg bg-white/70 p-3 border border-indigo-100">
-                            <p className="text-xs text-slate-500">Synced Calendar Events</p>
-                            <p className="text-lg font-semibold text-slate-900">
+                          <div className="rounded-lg bg-card/70 p-3 border border-indigo-100">
+                            <p className="text-xs text-muted-foreground">Synced Calendar Events</p>
+                            <p className="text-lg font-semibold text-foreground">
                               {calendarStatus.calendar_sync.synced_events}
                             </p>
                           </div>
-                          <div className="rounded-lg bg-white/70 p-3 border border-indigo-100">
-                            <p className="text-xs text-slate-500">Sync Issues</p>
+                          <div className="rounded-lg bg-card/70 p-3 border border-indigo-100">
+                            <p className="text-xs text-muted-foreground">Sync Issues</p>
                             <p className={`text-lg font-semibold ${
-                              calendarStatus.calendar_sync.degraded ? 'text-amber-700' : 'text-slate-900'
+                              calendarStatus.calendar_sync.degraded ? 'text-amber-700' : 'text-foreground'
                             }`}>
                               {calendarStatus.calendar_sync.failed_events +
                                 calendarStatus.calendar_sync.external_drift_events +
@@ -1194,7 +1197,7 @@ export function LumaLeasingConfig() {
                       <button
                         onClick={() => disconnectIntegration('calendar')}
                         disabled={disconnectingIntegration === 'calendar'}
-                        className="flex items-center gap-2 bg-white text-red-700 px-4 py-2 rounded-lg border border-red-200 hover:bg-red-50 transition-colors text-sm font-medium disabled:opacity-60"
+                        className="flex items-center gap-2 bg-card text-red-700 px-4 py-2 rounded-lg border border-red-200 hover:bg-red-50 transition-colors text-sm font-medium disabled:opacity-60"
                       >
                         <XCircle className="w-4 h-4" />
                         {disconnectingIntegration === 'calendar' ? 'Removing...' : 'Remove Calendar Account'}
@@ -1214,7 +1217,7 @@ export function LumaLeasingConfig() {
                             <button
                               onClick={repairCalendarSync}
                               disabled={repairingCalendarSync}
-                              className="flex items-center gap-2 bg-white text-slate-900 px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-sm font-medium disabled:opacity-60"
+                              className="flex items-center gap-2 bg-card text-foreground px-4 py-2 rounded-lg border border-border hover:bg-slate-50 transition-colors text-sm font-medium disabled:opacity-60"
                             >
                               <RefreshCw className={`w-4 h-4 ${repairingCalendarSync ? 'animate-spin' : ''}`} />
                               {repairingCalendarSync ? 'Repairing Calendar Sync...' : 'Repair Calendar Sync'}
@@ -1245,7 +1248,7 @@ export function LumaLeasingConfig() {
                   <IntegrationInvitesPanel key={currentProperty.id} propertyId={currentProperty.id} defaultCapability="calendar"/>
                   
                   {!calendarLoading&&!calendarError&&!calendarStatus?.connected && (
-                    <p className="text-xs text-slate-500 mt-3">
+                    <p className="text-xs text-muted-foreground mt-3">
                       💡 Without calendar integration, tour availability will be based on static time slots.
                       Connect your calendar for real-time availability.
                     </p>
@@ -1254,10 +1257,10 @@ export function LumaLeasingConfig() {
               </div>
             </div>
 
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+            <div className="bg-slate-50 border border-border rounded-xl p-4">
               <div className="flex items-center justify-between mb-3">
                 <div>
-                  <h4 className="text-sm font-semibold text-slate-900">Booking Recovery</h4>
+                  <h4 className="text-sm font-semibold text-foreground">Booking Recovery</h4>
                   <p className="text-xs text-slate-600">
                     Recover from booking issues with operator-triggered reschedule and cancel actions.
                   </p>
@@ -1265,7 +1268,7 @@ export function LumaLeasingConfig() {
                 <button
                   onClick={()=>void loadRecoveryBookings()}
                   disabled={recoveringBookingId !== null||recoveryLoading}
-                  className="text-xs px-3 py-1.5 rounded border border-slate-300 text-slate-700 hover:bg-white disabled:opacity-60"
+                  className="text-xs px-3 py-1.5 rounded border border-slate-300 text-slate-700 hover:bg-card disabled:opacity-60"
                 >
                   Refresh
                 </button>
@@ -1278,24 +1281,24 @@ export function LumaLeasingConfig() {
                 </div>
               )}
 
-              {recoveryLoading&&<p role="status" className="mb-3 text-sm text-slate-500">Loading bookings…</p>}
+              {recoveryLoading&&<p role="status" className="mb-3 text-sm text-muted-foreground">Loading bookings…</p>}
               {!recoveryLoading&&!recoveryError&&recoveryBookings.length === 0 ? (
-                <p className="text-xs text-slate-500">No bookings available for recovery actions.</p>
+                <p className="text-xs text-muted-foreground">No bookings available for recovery actions.</p>
               ) : (
                 <div className="space-y-3">
                   {recoveryBookings.map((booking) => (
-                    <div key={booking.id} className="rounded-lg border border-slate-200 bg-white p-3">
+                    <div key={booking.id} className="rounded-lg border border-border bg-card p-3">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className="text-sm font-medium text-slate-900">
+                          <p className="text-sm font-medium text-foreground">
                             {booking.lead?.name || 'Unknown lead'} • {booking.scheduled_date} {booking.scheduled_time.slice(0, 5)} {booking.schedule_timezone||'(timezone not confirmed)'}
                           </p>
-                          <p className="text-xs text-slate-500 mt-1">
+                          <p className="text-xs text-muted-foreground mt-1">
                             Status: {booking.status || 'unknown'} • Calendar:{' '}
                             {({external_drift:'Time changed — review needed',external_missing:'Event missing — review needed',external_cancelled:'Cancelled — review needed',synced:'Up to date',pending:'Update pending'} as Record<string,string>)[booking.calendar_event?.sync_status||''] || 'Not confirmed'}
                           </p>
                         </div>
-                        <span className="text-[11px] text-slate-500 font-mono">{booking.id.slice(0, 8)}</span>
+                        <span className="text-[11px] text-muted-foreground font-mono">{booking.id.slice(0, 8)}</span>
                       </div>
 
                       {booking.calendar_event?.sync_status?.startsWith('external_')?<CalendarChangeReview
@@ -1317,7 +1320,7 @@ export function LumaLeasingConfig() {
                               },
                             }))
                           }
-                          className="px-2 py-1.5 border border-slate-200 rounded text-xs"
+                          className="px-2 py-1.5 border border-border rounded text-xs"
                         />
                         <input
                           type="time"
@@ -1332,7 +1335,7 @@ export function LumaLeasingConfig() {
                               },
                             }))
                           }
-                          className="px-2 py-1.5 border border-slate-200 rounded text-xs"
+                          className="px-2 py-1.5 border border-border rounded text-xs"
                         />
                       </div>
 
@@ -1352,7 +1355,7 @@ export function LumaLeasingConfig() {
                         <button
                           onClick={() => runBookingRecovery(booking.id, 'cancel')}
                           disabled={!booking.can_cancel || recoveringBookingId === booking.id || !recoveryDrafts[booking.id]?.reason?.trim()}
-                          className="text-xs px-3 py-1.5 rounded bg-white border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50 flex items-center gap-1"
+                          className="text-xs px-3 py-1.5 rounded bg-card border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50 flex items-center gap-1"
                         >
                           <XCircle className="w-3 h-3" />
                           Cancel
@@ -1363,14 +1366,14 @@ export function LumaLeasingConfig() {
                   ))}
                 </div>
               )}
-              {recoveryCursor&&<button disabled={recoveryLoading} onClick={()=>void loadRecoveryBookings(recoveryCursor)} className="mt-3 rounded border bg-white px-3 py-2 text-sm disabled:opacity-50">Load more bookings</button>}
+              {recoveryCursor&&<button disabled={recoveryLoading} onClick={()=>void loadRecoveryBookings(recoveryCursor)} className="mt-3 rounded border bg-card px-3 py-2 text-sm disabled:opacity-50">Load more bookings</button>}
             </div>
 
             {/* Tour Settings */}
             <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
               <div>
-                <p className="font-medium text-slate-900">Enable Tour Booking</p>
-                <p className="text-sm text-slate-500">Allow visitors to schedule tours via chat</p>
+                <p className="font-medium text-foreground">Enable Tour Booking</p>
+                <p className="text-sm text-muted-foreground">Allow visitors to schedule tours via chat</p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input
@@ -1379,7 +1382,7 @@ export function LumaLeasingConfig() {
                   onChange={(e) => updateConfig('tours_enabled', e.target.checked)}
                   className="sr-only peer"
                 />
-                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-card after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
               </label>
             </div>
 
@@ -1394,7 +1397,7 @@ export function LumaLeasingConfig() {
                       onChange={(e) => updateConfig('tour_duration_minutes', parseInt(e.target.value) || 30)}
                       min={15}
                       step={15}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                      className="w-full px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                     />
                   </div>
                   <div>
@@ -1405,7 +1408,7 @@ export function LumaLeasingConfig() {
                       onChange={(e) => updateConfig('tour_buffer_minutes', parseInt(e.target.value) || 15)}
                       min={0}
                       step={5}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                      className="w-full px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                     />
                   </div>
                 </div>
@@ -1422,6 +1425,7 @@ export function LumaLeasingConfig() {
         )}
 
         {/* Embed Tab */}
+        {activeTab === 'embed' && <a href={`/lumaleasing/demo?apiKey=${encodeURIComponent(config.api_key)}`} target="_blank" rel="noopener noreferrer" className="console-link underline">Open saved widget in a test page</a>}
         {activeTab === 'embed' && <LumaWidgetOperations propertyId={currentProperty.id} mode="installation" settingsDirty={dirty} onStart={()=>setSaveMessage('')} onChanged={async()=>{await loadConfig();setSaveMessage('Widget decision saved with its history.')}}/>}
 
       </fieldset>

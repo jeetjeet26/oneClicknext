@@ -158,6 +158,7 @@ async function handlePost(req: NextRequest) {
         email: email || '',
         phone: phone || '',
         source: 'LumaLeasing Widget',
+        ...(body.attribution && { attribution: body.attribution }),
         status: 'new',
         move_in_date: moveInDate || null,
         bedrooms: bedroomPreference || null,

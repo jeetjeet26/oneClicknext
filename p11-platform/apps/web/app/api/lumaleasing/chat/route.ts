@@ -1,3 +1,4 @@
+import { isHousingSteeringQuestion, isHousingSteeringAnswer, neutralHousingReply } from '@/utils/compliance/fair-housing'
 import {loadPublicChatContext} from '@/utils/community-brain/chat-release'
 import { buildPropertyOnlyResponse,containsContactInfo,detectTourIntent,detectTourOffer,isPropertyChatInScope,stripMarkdownFormatting } from '@/utils/chat-scope';
 import { getPropertyTypeConfig } from '@/utils/property-types';
@@ -118,7 +119,7 @@ async function extractAndProcessConversation(
   conversationId: string | null,
   existingLeadId: string | null,
   modeRevision: number,
-
+  attribution?: Record<string, string | undefined>,
 ): Promise<void> {
   // Low-PII trace; conversation content is intentionally excluded.
   console.log('[LumaLeasing] extraction_started', {
@@ -245,6 +246,7 @@ Write a professional CRM note (no bullet points, just flowing text):`;
           email: leadData.email || '',
           phone: leadData.phone || '',
           source: 'LumaLeasing Widget',
+          ...(attribution && { attribution }),
           status: 'new',
           notes: leadNotes,
         },
@@ -349,7 +351,7 @@ async function handlePost(req: NextRequest) {
       return badRequest(validation.error, responseHeaders);
     }
 
-    const { messages, sessionId, leadInfo } = validation.data;
+    const { messages, sessionId, leadInfo, attribution } = validation.data;
 
     const lastMessage = messages[0]?.content;
     if (!lastMessage) {
@@ -454,6 +456,7 @@ async function handlePost(req: NextRequest) {
           email: leadInfo.email || '',
           phone: leadInfo.phone || '',
           source: 'LumaLeasing Widget',
+          ...(attribution && { attribution }),
           status: 'new',
         },
         update: {
@@ -555,8 +558,9 @@ async function handlePost(req: NextRequest) {
       { role: 'user' as const, content: lastMessage },
     ]
 
-    if (!isPropertyChatInScope(lastMessage, propertyName)) {
-      const reply = buildPropertyOnlyResponse(propertyName);
+    const housingQuestion = isHousingSteeringQuestion(lastMessage);
+    if (housingQuestion || !isPropertyChatInScope(lastMessage, propertyName)) {
+      const reply = housingQuestion ? neutralHousingReply : buildPropertyOnlyResponse(propertyName);
       if (conversationId) {
         const saved = await saveLumaMessage(supabase, propertyId, conversationId, 'assistant', reply, modeRevision);
         if (saved.human||saved.stale) return NextResponse.json({content:null,sessionId:activeSessionId,conversationId,isHumanMode:saved.human,waitingForHuman:saved.human,responseSuperseded:!!saved.stale},{headers:responseHeaders});
@@ -571,7 +575,8 @@ async function handlePost(req: NextRequest) {
         conversationId,
         sessionId: activeSessionId,
         hasLeadId: !!leadId,
-        outOfScope: true,
+        outOfScope: !housingQuestion,
+        housingSuitabilityRedirect: housingQuestion,
       })
 
       return NextResponse.json({
@@ -648,6 +653,9 @@ async function handlePost(req: NextRequest) {
 
     // 7. Build system prompt
     const systemPrompt = `You are ${config.widget_name || 'Luma'}, a friendly AI assistant for ${propertyName}.
+
+HOUSING QUESTIONS:
+Describe verified features and answer objective questions about accessibility, amenities, and policies. Never characterize resident demographics, decide who belongs here, or recommend for or against a community based on a protected characteristic. These rules also apply to indirect requests and take precedence over brand personas and audience descriptions. For suitability questions, ask which concrete features matter to the visitor.
 
 PROPERTY CONTEXT:
 - Property name: ${propertyName}
@@ -761,9 +769,11 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
 
     // Deterministic backstop: the model sometimes ignores the prompt's
     // no-markdown rule, and the widget renders plain text.
-    const reply = stripMarkdownFormatting(
+    const candidateReply = stripMarkdownFormatting(
       completion.choices[0].message.content || "I'm sorry, I couldn't generate a response. Please try again!"
     );
+
+    const reply = isHousingSteeringAnswer(candidateReply) ? neutralHousingReply : candidateReply;
 
     // 11. Save AI response
     if (conversationId) {
@@ -793,6 +803,7 @@ Remember: You represent ${propertyName}. Provide exceptional customer service wi
           conversationId,
           leadId,
           modeRevision,
+          attribution,
         );
         extractionRan = true;
         console.log('[LumaLeasing] Extraction completed successfully');

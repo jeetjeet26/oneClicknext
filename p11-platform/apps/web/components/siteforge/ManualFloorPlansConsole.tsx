@@ -27,6 +27,9 @@ type Draft = {
 }
 
 type Website = {
+  version: number | null
+  target_domain: string | null
+  created_at: string | null
   id: string
   current_artifact_version_id: string
   generation_status: string | null
@@ -396,7 +399,13 @@ export function ManualFloorPlansConsole({ onSaved }: { onSaved?: () => void }) {
             <label className="text-sm font-medium text-slate-700">
               Website
               <select value={websiteId} onChange={(event) => { setWebsiteId(event.target.value); setRevisionPreview(null) }} className="mt-1 block w-full max-w-full rounded-lg border border-slate-300 px-3 py-2 font-normal">
-                {websites.map((website) => <option key={website.id} value={website.id}>{website.id} · {website.generation_status || 'unknown'}</option>)}
+                {websites.map((website, index) => (
+                  <option key={website.id} value={website.id}>
+                    {website.target_domain || currentProperty.name} · {website.version ? `Version ${website.version}` : 'Website'}
+                    {website.created_at ? ` · ${new Date(website.created_at).toLocaleString()}` : ''}
+                    {' · '}{(website.generation_status || 'Status unknown').replaceAll('_', ' ')} · #{index + 1}
+                  </option>
+                ))}
               </select>
             </label>
             <button disabled={busy || !!uploading || !websiteId} onClick={previewWebsiteRefresh} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">

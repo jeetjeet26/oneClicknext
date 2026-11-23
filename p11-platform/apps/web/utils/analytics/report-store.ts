@@ -18,8 +18,12 @@ export async function biRpc(name: string, args: Record<string, unknown>, client:
             } | null;
         }>;
     }).rpc(name, args);
-    if (error || !data)
-        throw new InventoryError(error?.code === '22023' ? 'Choose a shorter report range; all matching rows must fit.' : 'The report could not be recorded or read. Check saved history before retrying.', error?.code === '22023' ? 400 : 503);
+    if (error || !data) {
+        if (error?.code === '22023') throw new InventoryError('Choose a shorter report range so all matching rows fit.', 400);
+        if (error?.code === '42501') throw new InventoryError(messages.forbidden, 403);
+        if (name === 'bi_report_source') throw new InventoryError('Campaign data could not be loaded. Retry the report.', 503);
+        throw new InventoryError('The report operation could not be confirmed. Check saved history before retrying.', 503);
+    }
     if (!['ready', 'saved', 'prepared', 'replayed'].includes(String(data.state)))
         throw new InventoryError(messages[String(data.state)] || 'Report data could not be confirmed.', data.state === 'forbidden' ? 403 : data.state === 'not_found' ? 404 : 409);
     if (data.propertyId !== args.p_property_id || args.p_id && data.id !== args.p_id)

@@ -386,7 +386,7 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
       setBusy(false);
     }
   }
-  const heading = mode === "facts" ? "Community facts" : mode === "creative" ? "Property design brief" : "Performance";
+  const heading = mode === "facts" ? "Community facts" : mode === "creative" ? "Property design brief" : tab === "campaigns" ? "Campaign performance" : "Property intelligence";
   const frozen =
     !!editing &&
     (editing.status === "measured" ||
@@ -404,6 +404,7 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
   return (
     <div className={`${styles.surface} space-y-6 text-gray-900`}>
       <header>
+        {mode === "performance" && tab === "campaigns" && <Link className="console-link mb-3 inline-flex underline" href="/dashboard">Back to Overview</Link>}
         {mode === "facts" ? <h2 className="text-2xl font-semibold tracking-tight">{heading}</h2> : <h1 className="text-3xl font-semibold tracking-tight">{heading}</h1>}
         <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-600">
           {propertyName} · {mode === "facts"
@@ -423,14 +424,10 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
           ["decisions", "Recommendations"],
           ["experiments", "Experiments"],
         ].map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => changeTab(id)}
-            aria-current={tab === id ? "page" : undefined}
-            className={tab === id ? "is-active" : ""}
-          >
+          <Link key={id} href={`/dashboard/intelligence?section=${id}`} scroll={false}
+            aria-current={tab === id ? "page" : undefined}>
             {label}
-          </button>
+          </Link>
         ))}
       </nav>}
       {error && (

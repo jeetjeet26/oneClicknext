@@ -8,7 +8,7 @@ import { PropertyProvider } from '@/components/layout/PropertyContext';
 import { PropertySwitchOverlay } from '@/components/layout/PropertySwitchOverlay';
 import { UserMenu } from '@/components/layout/UserMenu';
 import { GlobalSearch } from '@/components/layout/GlobalSearch';
-import { Bell } from 'lucide-react';
+import { Notifications } from '@/components/layout/Notifications';
 import {WorkspaceHeading} from '@/components/layout/WorkspaceHeading';
 import { createClient } from '@/utils/supabase/server';
 import { redirect } from 'next/navigation';
@@ -50,9 +50,7 @@ export default async function DashboardLayout({
               <div className="ml-auto flex min-w-0 items-center gap-3"><GlobalSearch /><PropertySwitcher /></div>
             </div>
             <div className="flex shrink-0 items-center space-x-1 sm:space-x-3">
-              <button aria-label="Notifications" className="hidden sm:block relative p-2 text-muted-foreground hover:bg-muted rounded-full transition-colors">
-                <Bell size={20} />
-              </button>
+              <Notifications />
               <div className="hidden sm:block h-6 w-px bg-border"></div>
               <UserMenu user={user} displayName={profile?.full_name||user.email?.split('@')[0]||'User'} />
             </div>

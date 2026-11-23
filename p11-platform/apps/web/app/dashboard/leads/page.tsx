@@ -12,7 +12,7 @@ import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import type { TourCorrection } from '@/utils/services/tour-outcomes';
 import { TourOutcomeForm, type SavedTourOutcome } from '@/components/leads/TourOutcomeForm';
 import { usePropertyContext } from '@/components/layout/PropertyContext';
-import { Search, ChevronDown, ChevronLeft, ChevronRight, Mail, Phone, Calendar, RefreshCw, Sparkles, User, X, MoreVertical, MessageSquare, CheckCircle2, Clock, Home, XCircle, Plus, Zap, Pause, Play, Square, Send, BedDouble, FileText, MapPin, Settings, Database, Link2, Upload, Loader2, SkipForward, AlertTriangle } from 'lucide-react';
+import { Search, ChevronDown, ChevronLeft, ChevronRight, Mail, Phone, Calendar, RefreshCw, Sparkles, Users, User, X, MoreVertical, MessageSquare, CheckCircle2, Clock, Home, XCircle, Plus, Zap, Pause, Play, Square, Send, BedDouble, FileText, MapPin, Settings, Database, Link2, Upload, Loader2, SkipForward, AlertTriangle } from 'lucide-react';
 import { formatDistanceToNow, format, parseISO, isAfter } from 'date-fns';
 import { TourScheduleModal } from '@/components/leads/TourScheduleModal';
 import { ActivityTimeline } from '@/components/leads/ActivityTimeline';
@@ -89,14 +89,14 @@ type Tour = {
     created_at: string;
 };
 const TOUR_TYPE_CONFIG = {
-    in_person: { label: 'In-Person', icon: MapPin, color: 'text-indigo-600 bg-indigo-100' },
+    in_person: { label: 'In-Person', icon: MapPin, color: 'text-primary bg-accent' },
     virtual: { label: 'Virtual', icon: Calendar, color: 'text-purple-600 bg-purple-100' },
     self_guided: { label: 'Self-Guided', icon: Home, color: 'text-emerald-600 bg-emerald-100' },
 };
 const TOUR_STATUS_CONFIG = {
     scheduled: { label: 'Scheduled', color: 'bg-blue-100 text-blue-700' },
     confirmed: { label: 'Confirmed', color: 'bg-emerald-100 text-emerald-700' },
-    completed: { label: 'Completed', color: 'bg-slate-100 text-slate-700' },
+    completed: { label: 'Completed', color: 'bg-secondary text-card-foreground' },
     cancelled: { label: 'Cancelled', color: 'bg-red-100 text-red-700' },
     no_show: { label: 'No Show', color: 'bg-amber-100 text-amber-700' },
 };
@@ -121,9 +121,9 @@ const STATUS_CONFIG = {
     },
     toured: {
         label: 'Toured',
-        color: 'bg-indigo-100 text-indigo-700 border-indigo-200',
+        color: 'bg-accent text-accent-foreground border-indigo-200',
         icon: CheckCircle2,
-        bgLight: 'bg-indigo-50'
+        bgLight: 'bg-accent'
     },
     leased: {
         label: 'Leased',
@@ -133,18 +133,18 @@ const STATUS_CONFIG = {
     },
     lost: {
         label: 'Lost',
-        color: 'bg-slate-100 text-slate-600 border-slate-200',
+        color: 'bg-secondary text-muted-foreground border-border',
         icon: XCircle,
-        bgLight: 'bg-slate-50'
+        bgLight: 'bg-muted'
     },
 };
-const UNKNOWN_STATUS = { label: 'Unrecognized status', color: 'bg-slate-100 text-slate-600 border-slate-200', icon: AlertTriangle, bgLight: 'bg-slate-50' };
+const UNKNOWN_STATUS = { label: 'Unrecognized status', color: 'bg-secondary text-muted-foreground border-border', icon: AlertTriangle, bgLight: 'bg-muted' };
 const WORKFLOW_STATUS_CONFIG = {
     active: { label: 'Active', color: 'bg-green-100 text-green-700', icon: Zap },
     paused: { label: 'Paused', color: 'bg-amber-100 text-amber-700', icon: Pause },
     completed: { label: 'Completed', color: 'bg-blue-100 text-blue-700', icon: CheckCircle2 },
     converted: { label: 'Converted', color: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2 },
-    stopped: { label: 'Stopped', color: 'bg-slate-100 text-slate-600', icon: Square },
+    stopped: { label: 'Stopped', color: 'bg-secondary text-muted-foreground', icon: Square },
 };
 function StatusBadge({ status }: {
     status: Lead['status'];
@@ -167,7 +167,7 @@ function ScoreBadge({ score }: {
             return 'bg-emerald-100 text-emerald-700 border-emerald-200';
         if (score >= 40)
             return 'bg-amber-100 text-amber-700 border-amber-200';
-        return 'bg-slate-100 text-slate-600 border-slate-200';
+        return 'bg-secondary text-muted-foreground border-border';
     };
     return (<span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium border ${getColor()}`}>
       <Zap size={10}/>
@@ -194,7 +194,7 @@ function LeadRow({ lead, onStatusChange, onSelect, isSelected, onToggleSelect, c
             created: { icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Synced' },
             linked: { icon: Link2, color: 'text-blue-600', bg: 'bg-blue-50', label: 'Linked' },
             failed: { icon: XCircle, color: 'text-red-600', bg: 'bg-red-50', label: 'Failed' },
-            skipped: { icon: SkipForward, color: 'text-slate-400', bg: 'bg-slate-50', label: 'Skipped' },
+            skipped: { icon: SkipForward, color: 'text-slate-400', bg: 'bg-muted', label: 'Skipped' },
             dead_lettered: { icon: AlertTriangle, color: 'text-red-700', bg: 'bg-red-100', label: 'CRM delivery needs attention' },
         };
         const syncStatus = syncConfig[lead.crm_sync_status];
@@ -206,22 +206,22 @@ function LeadRow({ lead, onStatusChange, onSelect, isSelected, onToggleSelect, c
         <span className={syncStatus.color}>{syncStatus.label}</span>
       </div>);
     };
-    return (<tr className={`border-b border-slate-100 hover:bg-slate-50/50 transition-colors ${config.bgLight}`}>
+    return (<tr className={`border-b border-border hover:bg-slate-50/50 transition-colors ${config.bgLight}`}>
       <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
-        <input type="checkbox" checked={isSelected} onChange={() => onToggleSelect(lead.id)} className="w-4 h-4 text-teal-600 border-slate-300 rounded focus:ring-teal-500 cursor-pointer"/>
+        <input type="checkbox" checked={isSelected} onChange={() => onToggleSelect(lead.id)} className="w-4 h-4 text-teal-600 border-input rounded focus:ring-teal-500 cursor-pointer"/>
       </td>
       <td className="px-4 py-4 cursor-pointer" onClick={() => onSelect(lead)}>
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white font-medium text-sm shadow-sm">
+          <div className="h-10 w-10 rounded-full bg-primary flex items-center justify-center text-white font-medium text-sm shadow-sm">
             {lead.first_name[0]}{lead.last_name[0]}
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <p className="font-medium text-slate-900">{lead.first_name} {lead.last_name}</p>
+              <p className="font-medium text-foreground">{lead.first_name} {lead.last_name}</p>
               <ScoreBadge score={lead.score} bucket={lead.score_bucket}/>
               {getCRMSyncBadge()}
             </div>
-            <p className="text-sm text-slate-500">{lead.email}</p>
+            <p className="text-sm text-muted-foreground">{lead.email}</p>
           </div>
         </div>
       </td>
@@ -233,13 +233,13 @@ function LeadRow({ lead, onStatusChange, onSelect, isSelected, onToggleSelect, c
           
           {showStatusMenu && (<>
               <div className="fixed inset-0 z-10" onClick={() => setShowStatusMenu(false)}/>
-              <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-20 min-w-[160px]">
+              <div className="absolute top-full left-0 mt-1 bg-card rounded-lg shadow-lg border border-border py-1 z-20 min-w-[160px]">
                 {Object.entries(STATUS_CONFIG).map(([key, config]) => {
                 const Icon = config.icon;
                 return (<button key={key} onClick={() => {
                         onStatusChange(lead.id, key as Lead['status']);
                         setShowStatusMenu(false);
-                    }} className={`w-full px-3 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 ${lead.status === key ? 'bg-slate-50 font-medium' : ''}`}>
+                    }} className={`w-full px-3 py-2 text-left text-sm hover:bg-muted flex items-center gap-2 ${lead.status === key ? 'bg-muted font-medium' : ''}`}>
                       <Icon size={14}/>
                       {config.label}
                     </button>);
@@ -249,18 +249,18 @@ function LeadRow({ lead, onStatusChange, onSelect, isSelected, onToggleSelect, c
         </div>
       </td>
       <td className="px-4 py-4">
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-600">
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary text-muted-foreground">
           {lead.source}
         </span>
       </td>
       <td className="px-4 py-4">
-        {lead.phone ? (<a href={`tel:${lead.phone}`} className="text-sm text-slate-600 hover:text-indigo-600 flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+        {lead.phone ? (<a href={`tel:${lead.phone}`} className="text-sm text-muted-foreground hover:text-primary flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
             <Phone size={14}/>
             {lead.phone}
           </a>) : (<span className="text-sm text-slate-400">—</span>)}
       </td>
       <td className="px-4 py-4">
-        <div className="flex items-center gap-1.5 text-sm text-slate-500">
+        <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
           <Clock size={14}/>
           {formatDistanceToNow(new Date(lastTouchAt), { addSuffix: true })}
         </div>
@@ -281,9 +281,9 @@ function WorkflowStatus({ workflow, onAction, busy }: {
     onAction: (action: 'pause' | 'resume' | 'stop') => void;
 }) {
     if (!workflow) {
-        return (<div className="bg-slate-50 rounded-xl p-4 text-center">
+        return (<div className="bg-muted rounded-xl p-4 text-center">
         <Zap className="mx-auto text-slate-300 mb-2" size={24}/>
-        <p className="text-sm text-slate-500">No active automation</p>
+        <p className="text-sm text-muted-foreground">No active automation</p>
       </div>);
     }
     const config = WORKFLOW_STATUS_CONFIG[workflow.status];
@@ -295,7 +295,7 @@ function WorkflowStatus({ workflow, onAction, busy }: {
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Zap className="text-amber-500" size={18}/>
-          <span className="font-medium text-slate-900 text-sm">
+          <span className="font-medium text-foreground text-sm">
             {workflow.workflow?.name || 'Automation'}
           </span>
         </div>
@@ -307,7 +307,7 @@ function WorkflowStatus({ workflow, onAction, busy }: {
 
       {/* Progress */}
       <div className="mb-3">
-        <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+        <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
           <span>Step {Math.min(currentStep + 1, totalSteps)} of {totalSteps}</span>
           {workflow.next_action_at && workflow.status === 'active' && (<span>Next: {formatDistanceToNow(new Date(workflow.next_action_at), { addSuffix: true })}</span>)}
         </div>
@@ -321,9 +321,9 @@ function WorkflowStatus({ workflow, onAction, busy }: {
         {steps.slice(0, 3).map((step, i) => (<div key={`${i}:${step.id ?? step.action}`} className={`flex items-center gap-2 text-xs ${i < currentStep
                 ? 'text-emerald-600'
                 : i === currentStep
-                    ? 'text-indigo-600 font-medium'
+                    ? 'text-primary font-medium'
                     : 'text-slate-400'}`}>
-            {i < currentStep ? (<CheckCircle2 size={12}/>) : i === currentStep ? (<div className="w-3 h-3 border-2 border-indigo-500 rounded-full animate-pulse"/>) : (<div className="w-3 h-3 border border-slate-300 rounded-full"/>)}
+            {i < currentStep ? (<CheckCircle2 size={12}/>) : i === currentStep ? (<div className="w-3 h-3 border-2 border-ring rounded-full animate-pulse"/>) : (<div className="w-3 h-3 border border-input rounded-full"/>)}
             <span className="capitalize">{step.action}</span>
             <span className="text-slate-400">
               (+{step.delay_hours}h)
@@ -332,16 +332,16 @@ function WorkflowStatus({ workflow, onAction, busy }: {
         {steps.length > 3 && (<p className="text-xs text-slate-400 pl-5">+{steps.length - 3} more steps</p>)}
       </div>
 
-      {workflow.action_visibility && (<div className="mb-3 rounded-lg border border-slate-200 bg-white/70 p-3">
+      {workflow.action_visibility && (<div className="mb-3 rounded-lg border border-border bg-white/70 p-3">
           <div className="grid grid-cols-5 gap-2 text-center text-[11px]">
             {([
-                ['Pending', workflow.action_visibility.counts.pending, 'text-slate-700 bg-slate-100'],
-                ['Skipped', workflow.action_visibility.counts.skipped, 'text-slate-600 bg-slate-100'],
-                ['Retried', workflow.action_visibility.counts.retried, 'text-indigo-700 bg-indigo-100'],
+                ['Pending', workflow.action_visibility.counts.pending, 'text-card-foreground bg-secondary'],
+                ['Skipped', workflow.action_visibility.counts.skipped, 'text-muted-foreground bg-secondary'],
+                ['Retried', workflow.action_visibility.counts.retried, 'text-accent-foreground bg-accent'],
                 ['Paused', workflow.action_visibility.counts.paused, 'text-amber-700 bg-amber-100'],
                 ['Failed', workflow.action_visibility.counts.failed, 'text-red-700 bg-red-100'],
             ] as const).map(([label, count, style]) => (<div key={label}>
-                <p className="text-slate-500">{label}</p>
+                <p className="text-muted-foreground">{label}</p>
                 <p className={`mt-1 rounded px-1.5 py-0.5 font-semibold ${style}`}>{count}</p>
               </div>))}
           </div>
@@ -368,7 +368,7 @@ function WorkflowStatus({ workflow, onAction, busy }: {
               <Play size={12}/>
               Resume
             </button>)}
-          <button disabled={busy} onClick={() => onAction('stop')} className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors">
+          <button disabled={busy} onClick={() => onAction('stop')} className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium text-muted-foreground bg-secondary rounded-lg hover:bg-slate-200 transition-colors">
             <Square size={12}/>
             Stop
           </button>
@@ -426,33 +426,33 @@ function SendMessageModal({ isOpen, onClose, lead, onSent }: {
     return (<>
       <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60]" onClick={onClose}/>
       <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
-        <div className="modal-light-mode bg-white rounded-2xl shadow-2xl w-full max-w-md animate-in fade-in zoom-in-95 duration-200">
-          <div className="border-b border-slate-200 px-6 py-4 flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
-              <Send className="text-indigo-600" size={20}/>
+        <div className="modal-light-mode bg-card rounded-2xl shadow-2xl w-full max-w-md animate-in fade-in zoom-in-95 duration-200">
+          <div className="border-b border-border px-6 py-4 flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+              <Send className="text-primary" size={20}/>
               Send Message
             </h3>
-            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg transition-colors">
-              <X size={20} className="text-slate-500"/>
+            <button onClick={onClose} className="p-2 hover:bg-secondary rounded-lg transition-colors">
+              <X size={20} className="text-muted-foreground"/>
             </button>
           </div>
 
           <div className="p-6 space-y-4">
             {/* Channel Selection */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
+              <label className="block text-sm font-medium text-card-foreground mb-2">
                 Send via
               </label>
               <div className="flex gap-2">
                 <button onClick={() => setChannel('sms')} disabled={!canSendSMS} className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-all ${channel === 'sms'
             ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
-            : 'border-slate-200 text-slate-600 hover:bg-slate-50'} disabled:opacity-50 disabled:cursor-not-allowed`}>
+            : 'border-border text-muted-foreground hover:bg-muted'} disabled:opacity-50 disabled:cursor-not-allowed`}>
                   <Phone size={16}/>
                   SMS
                 </button>
                 <button onClick={() => setChannel('email')} disabled={!canSendEmail} className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-all ${channel === 'email'
             ? 'border-blue-500 bg-blue-50 text-blue-700'
-            : 'border-slate-200 text-slate-600 hover:bg-slate-50'} disabled:opacity-50 disabled:cursor-not-allowed`}>
+            : 'border-border text-muted-foreground hover:bg-muted'} disabled:opacity-50 disabled:cursor-not-allowed`}>
                   <Mail size={16}/>
                   Email
                 </button>
@@ -461,32 +461,32 @@ function SendMessageModal({ isOpen, onClose, lead, onSent }: {
             </div>
 
             {/* Recipient */}
-            <div className="bg-slate-50 rounded-lg px-4 py-3">
-              <p className="text-xs text-slate-500 mb-1">To</p>
-              <p className="text-sm font-medium text-slate-900">
+            <div className="bg-muted rounded-lg px-4 py-3">
+              <p className="text-xs text-muted-foreground mb-1">To</p>
+              <p className="text-sm font-medium text-foreground">
                 {lead.first_name} {lead.last_name}
               </p>
-              <p className="text-sm text-slate-600">
+              <p className="text-sm text-muted-foreground">
                 {channel === 'sms' ? lead.phone : lead.email}
               </p>
             </div>
 
             {/* Subject (email only) */}
             {channel === 'email' && (<div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                <label className="block text-sm font-medium text-card-foreground mb-1.5">
                   Subject
                 </label>
-                <input type="text" value={subject} onChange={e => setSubject(e.target.value)} placeholder="Re: Your inquiry about..." className="w-full px-3 py-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"/>
+                <input type="text" value={subject} onChange={e => setSubject(e.target.value)} placeholder="Re: Your inquiry about..." className="w-full px-3 py-2.5 border border-input rounded-lg bg-card text-foreground placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-ring"/>
               </div>)}
 
             {/* Message */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              <label className="block text-sm font-medium text-card-foreground mb-1.5">
                 Message
               </label>
               <textarea value={message} onChange={e => setMessage(e.target.value)} rows={channel === 'sms' ? 3 : 5} placeholder={channel === 'sms'
             ? "Hi! Just following up on your inquiry..."
-            : "Hi,\n\nThank you for your interest in..."} className="w-full px-3 py-2.5 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 resize-none"/>
+            : "Hi,\n\nThank you for your interest in..."} className="w-full px-3 py-2.5 border border-input rounded-lg bg-card text-foreground placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-ring resize-none"/>
               {channel === 'sms' && (<p className="text-xs text-slate-400 mt-1">
                   {message.length}/160 characters
                 </p>)}
@@ -498,10 +498,10 @@ function SendMessageModal({ isOpen, onClose, lead, onSent }: {
 
             {/* Actions */}
             <div className="flex gap-3 pt-2">
-              <button onClick={onClose} className="flex-1 px-4 py-2.5 border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors font-medium">
+              <button onClick={onClose} className="flex-1 px-4 py-2.5 border border-border text-card-foreground rounded-lg hover:bg-muted transition-colors font-medium">
                 Cancel
               </button>
-              <button onClick={handleSend} disabled={loading || !message.trim() || (channel === 'sms' && !canSendSMS) || (channel === 'email' && !canSendEmail)} className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+              <button onClick={handleSend} disabled={loading || !message.trim() || (channel === 'sms' && !canSendSMS) || (channel === 'email' && !canSendEmail)} className="flex-1 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg hover:brightness-95 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                 {loading ? (<>
                     <RefreshCw size={16} className="animate-spin"/>
                     Sending...
@@ -544,14 +544,14 @@ function TourCard({ tour, onOutcomeSaved, onScheduleSaved, leadId }: {
     const TypeIcon = typeConfig.icon;
     const isPast = Boolean(tour.starts_at) && !isAfter(new Date(tour.starts_at!), new Date());
     const isActive = tour.status === 'scheduled' || tour.status === 'confirmed';
-    return (<div className={`bg-white border rounded-xl p-4 ${isPast && !isActive && tour.status !== 'no_show' ? 'opacity-75' : ''}`}>
+    return (<div className={`bg-card border rounded-xl p-4 ${isPast && !isActive && tour.status !== 'no_show' ? 'opacity-75' : ''}`}>
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-2">
           <div className={`p-2 rounded-lg ${typeConfig.color}`}>
             <TypeIcon size={16}/>
           </div>
           <div>
-            <p className="font-medium text-slate-900">
+            <p className="font-medium text-foreground">
               {typeConfig.label} Tour
             </p>
             <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${statusConfig.color}`}>
@@ -562,20 +562,20 @@ function TourCard({ tour, onOutcomeSaved, onScheduleSaved, leadId }: {
       </div>
 
       <div className="space-y-2 text-sm">
-        <div className="flex items-center gap-2 text-slate-600">
+        <div className="flex items-center gap-2 text-muted-foreground">
           <Calendar size={14} className="text-slate-400"/>
           {format(parseISO(tour.tour_date), 'EEEE, MMMM d, yyyy')}
         </div>
-        <div className="flex items-center gap-2 text-slate-600">
+        <div className="flex items-center gap-2 text-muted-foreground">
           <Clock size={14} className="text-slate-400"/>
           {format(new Date(`2000-01-01T${tour.tour_time}`), 'h:mm a')} · {tour.timezone || 'Timezone needs review'}
         </div>
-        {tour.notes && (<p className="text-slate-500 text-xs mt-2 pt-2 border-t border-slate-100">
+        {tour.notes && (<p className="text-muted-foreground text-xs mt-2 pt-2 border-t border-border">
             {tour.notes}
           </p>)}
       </div>
 
-      {tour.outcome_notes && !tour.correction && <p className="mt-3 border-t border-slate-100 pt-3 text-sm text-slate-700"><span className="font-medium">Outcome notes: </span>{tour.outcome_notes}</p>}
+      {tour.outcome_notes && !tour.correction && <p className="mt-3 border-t border-border pt-3 text-sm text-card-foreground"><span className="font-medium">Outcome notes: </span>{tour.outcome_notes}</p>}
 
       {tour.correction && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
         <p className="font-medium">Corrected from no-show</p>
@@ -590,7 +590,7 @@ function TourCard({ tour, onOutcomeSaved, onScheduleSaved, leadId }: {
 
       {isActive && leadId && onOutcomeSaved && <TourOutcomeForm leadId={leadId} tourId={tour.id} onSaved={onOutcomeSaved}/>}
 
-      {tour.schedule_change && <div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
+      {tour.schedule_change && <div className="mt-3 rounded-lg bg-muted p-3 text-sm text-card-foreground">
         <p className="font-medium">{tour.schedule_change.action === 'cancel' ? 'Cancellation recorded' : 'Schedule updated'}</p>
         <p>{tour.schedule_change.reason}</p>
         <p className="mt-1 text-xs">{tour.schedule_change.delivery === 'review' ? 'Delivery needs review. Check the connected calendar and message history.' : tour.schedule_change.delivery === 'pending' ? 'Calendar or prospect updates are pending.' : tour.schedule_change.delivery === 'not_sent' ? 'Some updates were not sent. Review the tour change delivery history.' : tour.schedule_change.delivery === 'complete' ? 'Queued updates were confirmed.' : 'No external updates were queued.'}</p>
@@ -784,16 +784,16 @@ function LeadDetailDrawer({ lead, onClose, onStatusChange, onOutcomeStatusSaved,
         return null;
     return (<>
       <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40" onClick={onClose}/>
-      <div className="fixed right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl z-50 overflow-y-auto animate-in slide-in-from-right duration-300">
-        <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between z-10">
-          <h2 className="text-lg font-semibold text-slate-900">Lead Details</h2>
+      <div className="fixed right-0 top-0 h-full w-full max-w-md bg-card shadow-2xl z-50 overflow-y-auto animate-in slide-in-from-right duration-300">
+        <div className="sticky top-0 bg-card border-b border-border px-6 py-4 flex items-center justify-between z-10">
+          <h2 className="text-lg font-semibold text-foreground">Lead Details</h2>
           <div className="flex items-center gap-2">
-            <button disabled={controller.busy || !!controller.pending || !controller.canManage} onClick={() => setShowEditLead(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors">
+            <button disabled={controller.busy || !!controller.pending || !controller.canManage} onClick={() => setShowEditLead(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-accent-foreground bg-accent rounded-lg hover:bg-accent transition-colors">
               <Settings size={16}/>
               Edit
             </button>
-            <button onClick={onClose} aria-label="Close lead details" className="p-2 hover:bg-slate-100 rounded-lg transition-colors">
-              <X size={20} className="text-slate-500"/>
+            <button onClick={onClose} aria-label="Close lead details" className="p-2 hover:bg-secondary rounded-lg transition-colors">
+              <X size={20} className="text-muted-foreground"/>
             </button>
           </div>
         </div>
@@ -801,17 +801,17 @@ function LeadDetailDrawer({ lead, onClose, onStatusChange, onOutcomeStatusSaved,
         <div className="p-6 space-y-6">
           {/* Lead Header */}
           <div className="flex items-start gap-4">
-            <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-indigo-500/20">
+            <div className="h-16 w-16 rounded-2xl bg-primary flex items-center justify-center text-white font-bold text-xl shadow-sm">
               {lead.first_name[0]}{lead.last_name[0]}
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-2">
-                <h3 className="text-xl font-semibold text-slate-900">
+                <h3 className="text-xl font-semibold text-foreground">
                   {lead.first_name} {lead.last_name}
                 </h3>
                 <ScoreBadge score={lead.score} bucket={lead.score_bucket}/>
               </div>
-              <p className="text-slate-500">{lead.source}</p>
+              <p className="text-muted-foreground">{lead.source}</p>
               <div className="mt-2">
                 <StatusBadge status={lead.status}/>
               </div>
@@ -820,10 +820,10 @@ function LeadDetailDrawer({ lead, onClose, onStatusChange, onOutcomeStatusSaved,
 
           <LeadRecordRecovery controller={controller}/>
           {/* Tabs */}
-          <div className="flex flex-wrap gap-1 p-1 bg-slate-100 rounded-lg">
+          <div className="flex flex-wrap gap-1 p-1 bg-secondary rounded-lg">
             {(['details', 'tours', 'conversations', 'activity', 'automation'] as const).map(tab => (<button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 px-3 py-2 text-sm font-medium rounded-md transition-all ${activeTab === tab
-                ? 'bg-white text-slate-900 shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'}`}>
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'}`}>
                 {tab.charAt(0).toUpperCase() + tab.slice(1)}
                 {tab === 'tours' && tours.filter(t => t.status === 'scheduled' || t.status === 'confirmed').length > 0 && (<span className="ml-1.5 inline-flex items-center justify-center h-5 w-5 text-xs font-bold bg-purple-100 text-purple-700 rounded-full">
                     {tours.filter(t => t.status === 'scheduled' || t.status === 'confirmed').length}
@@ -833,86 +833,86 @@ function LeadDetailDrawer({ lead, onClose, onStatusChange, onOutcomeStatusSaved,
 
           {activeTab === 'details' && (<>
               {/* Contact Info */}
-              <div className="bg-slate-50 rounded-xl p-4 space-y-3">
-                <h4 className="text-sm font-medium text-slate-700 mb-3">Contact Information</h4>
+              <div className="bg-muted rounded-xl p-4 space-y-3">
+                <h4 className="text-sm font-medium text-card-foreground mb-3">Contact Information</h4>
                 
                 <div className="flex items-center gap-3">
-                  <div className="h-9 w-9 bg-white rounded-lg flex items-center justify-center shadow-sm">
-                    <Mail size={16} className="text-slate-500"/>
+                  <div className="h-9 w-9 bg-card rounded-lg flex items-center justify-center shadow-sm">
+                    <Mail size={16} className="text-muted-foreground"/>
                   </div>
                   <div>
                     <p className="text-xs text-slate-400">Email</p>
-                    {lead.email ? (<a href={`mailto:${lead.email}`} className="text-sm font-medium text-slate-900 hover:text-indigo-600">
+                    {lead.email ? (<a href={`mailto:${lead.email}`} className="text-sm font-medium text-foreground hover:text-primary">
                         {lead.email}
                       </a>) : (<span className="text-sm text-slate-400">Not provided</span>)}
                   </div>
                 </div>
 
                 <div className="flex items-center gap-3">
-                  <div className="h-9 w-9 bg-white rounded-lg flex items-center justify-center shadow-sm">
-                    <Phone size={16} className="text-slate-500"/>
+                  <div className="h-9 w-9 bg-card rounded-lg flex items-center justify-center shadow-sm">
+                    <Phone size={16} className="text-muted-foreground"/>
                   </div>
                   <div>
                     <p className="text-xs text-slate-400">Phone</p>
-                    {lead.phone ? (<a href={`tel:${lead.phone}`} className="text-sm font-medium text-slate-900 hover:text-indigo-600">
+                    {lead.phone ? (<a href={`tel:${lead.phone}`} className="text-sm font-medium text-foreground hover:text-primary">
                         {lead.phone}
                       </a>) : (<span className="text-sm text-slate-400">Not provided</span>)}
                   </div>
                 </div>
 
                 {lead.bedrooms && (<div className="flex items-center gap-3">
-                    <div className="h-9 w-9 bg-white rounded-lg flex items-center justify-center shadow-sm">
-                      <BedDouble size={16} className="text-slate-500"/>
+                    <div className="h-9 w-9 bg-card rounded-lg flex items-center justify-center shadow-sm">
+                      <BedDouble size={16} className="text-muted-foreground"/>
                     </div>
                     <div>
                       <p className="text-xs text-slate-400">Looking for</p>
-                      <p className="text-sm font-medium text-slate-900">{lead.bedrooms}</p>
+                      <p className="text-sm font-medium text-foreground">{lead.bedrooms}</p>
                     </div>
                   </div>)}
 
                 {lead.move_in_date && (<div className="flex items-center gap-3">
-                    <div className="h-9 w-9 bg-white rounded-lg flex items-center justify-center shadow-sm">
-                      <Calendar size={16} className="text-slate-500"/>
+                    <div className="h-9 w-9 bg-card rounded-lg flex items-center justify-center shadow-sm">
+                      <Calendar size={16} className="text-muted-foreground"/>
                     </div>
                     <div>
                       <p className="text-xs text-slate-400">Move-in Date</p>
-                      <p className="text-sm font-medium text-slate-900">
+                      <p className="text-sm font-medium text-foreground">
                         {format(new Date(lead.move_in_date), 'MMM d, yyyy')}
                       </p>
                     </div>
                   </div>)}
 
                 <div className="flex items-center gap-3">
-                  <div className="h-9 w-9 bg-white rounded-lg flex items-center justify-center shadow-sm">
-                    <Clock size={16} className="text-slate-500"/>
+                  <div className="h-9 w-9 bg-card rounded-lg flex items-center justify-center shadow-sm">
+                    <Clock size={16} className="text-muted-foreground"/>
                   </div>
                   <div>
                     <p className="text-xs text-slate-400">Created</p>
-                    <p className="text-sm font-medium text-slate-900">
+                    <p className="text-sm font-medium text-foreground">
                       {format(new Date(lead.created_at), 'MMM d, yyyy \'at\' h:mm a')}
                     </p>
                   </div>
                 </div>
               </div>
 
-              {lead.notes && (<div className="bg-slate-50 rounded-xl p-4">
+              {lead.notes && (<div className="bg-muted rounded-xl p-4">
                   <div className="flex items-center gap-2 mb-2">
-                    <FileText size={16} className="text-slate-500"/>
-                    <h4 className="text-sm font-medium text-slate-700">Notes</h4>
+                    <FileText size={16} className="text-muted-foreground"/>
+                    <h4 className="text-sm font-medium text-card-foreground">Notes</h4>
                   </div>
-                  <p className="text-sm text-slate-600">{lead.notes}</p>
+                  <p className="text-sm text-muted-foreground">{lead.notes}</p>
                 </div>)}
 
               {/* Status Update */}
               <div>
-                <h4 className="text-sm font-medium text-slate-700 mb-3">Update Status</h4>
+                <h4 className="text-sm font-medium text-card-foreground mb-3">Update Status</h4>
                 <div className="grid grid-cols-2 gap-2">
                   {Object.entries(STATUS_CONFIG).map(([key, config]) => {
                 const Icon = config.icon;
                 const isActive = lead.status === key;
                 return (<button key={key} disabled={controller.busy || !!controller.pending || !controller.canManage} onClick={() => onStatusChange(lead.id, key as Lead['status'])} className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all ${isActive
                         ? config.color + ' ring-2 ring-offset-2 ring-indigo-500'
-                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        : 'border-border text-muted-foreground hover:bg-muted'}`}>
                         <Icon size={16}/>
                         {config.label}
                       </button>);
@@ -922,9 +922,9 @@ function LeadDetailDrawer({ lead, onClose, onStatusChange, onOutcomeStatusSaved,
 
               {/* Quick Actions */}
               <div>
-                <h4 className="text-sm font-medium text-slate-700 mb-3">Quick Actions</h4>
+                <h4 className="text-sm font-medium text-card-foreground mb-3">Quick Actions</h4>
                 <div className="space-y-2">
-                  <button onClick={() => setShowSendMessage(true)} disabled={!lead.email && !lead.phone} className="flex items-center gap-3 w-full px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-500/20">
+                  <button onClick={() => setShowSendMessage(true)} disabled={!lead.email && !lead.phone} className="flex items-center gap-3 w-full px-4 py-3 bg-primary text-primary-foreground rounded-lg hover:brightness-95 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm">
                     <Send size={18}/>
                     <span className="font-medium">Send Message</span>
                   </button>
@@ -954,7 +954,7 @@ function LeadDetailDrawer({ lead, onClose, onStatusChange, onOutcomeStatusSaved,
                     {tours
                     .filter(t => t.status === 'scheduled' || t.status === 'confirmed')
                     .slice(0, 2)
-                    .map(tour => (<div key={tour.id} className="bg-white rounded-lg px-3 py-2 flex items-center justify-between">
+                    .map(tour => (<div key={tour.id} className="bg-card rounded-lg px-3 py-2 flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <div className={`p-1.5 rounded ${TOUR_TYPE_CONFIG[tour.tour_type].color}`}>
                               {(() => {
@@ -963,10 +963,10 @@ function LeadDetailDrawer({ lead, onClose, onStatusChange, onOutcomeStatusSaved,
                     })()}
                             </div>
                             <div>
-                              <p className="text-sm font-medium text-slate-900">
+                              <p className="text-sm font-medium text-foreground">
                                 {format(parseISO(tour.tour_date), 'MMM d')}
                               </p>
-                              <p className="text-xs text-slate-500">
+                              <p className="text-xs text-muted-foreground">
                                 {format(new Date(`2000-01-01T${tour.tour_time}`), 'h:mm a')}
                               </p>
                             </div>
@@ -983,7 +983,7 @@ function LeadDetailDrawer({ lead, onClose, onStatusChange, onOutcomeStatusSaved,
               <TourReminderHistory key={lead.id} leadId={lead.id}/>
               <TourScheduleDeliveryHistory key={`schedule-${lead.id}`} leadId={lead.id} onSaved={() => void fetchTours()}/>
               <div className="flex items-center justify-between">
-                <h4 className="text-sm font-medium text-slate-700">Scheduled Tours</h4>
+                <h4 className="text-sm font-medium text-card-foreground">Scheduled Tours</h4>
                 <button disabled={toursLoading || !bookingContext} onClick={() => setShowScheduleTour(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white text-xs font-medium rounded-lg hover:bg-purple-700 transition-colors">
                   <Plus size={14}/>
                   New Tour
@@ -992,11 +992,11 @@ function LeadDetailDrawer({ lead, onClose, onStatusChange, onOutcomeStatusSaved,
 
               {outcomeNotice && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{outcomeNotice}</p>}
               {toursError ? <div role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{toursError} <button type="button" onClick={fetchTours} className="underline">Retry tours</button></div>
-                : toursLoading ? <p role="status" className="text-sm text-slate-500">Loading tour records…</p>
-                    : tours.length === 0 ? (<div className="bg-slate-50 rounded-xl p-6 text-center">
+                : toursLoading ? <p role="status" className="text-sm text-muted-foreground">Loading tour records…</p>
+                    : tours.length === 0 ? (<div className="bg-muted rounded-xl p-6 text-center">
                   <Calendar className="mx-auto text-slate-300 mb-3" size={32}/>
-                  <p className="text-sm text-slate-600 font-medium mb-1">No tours scheduled</p>
-                  <p className="text-xs text-slate-500 mb-4">
+                  <p className="text-sm text-muted-foreground font-medium mb-1">No tours scheduled</p>
+                  <p className="text-xs text-muted-foreground mb-4">
                     Schedule a tour to help this lead find their perfect home.
                   </p>
                   <button disabled={toursLoading || !bookingContext} onClick={() => setShowScheduleTour(true)} className="inline-flex items-center gap-1.5 px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 transition-colors">
@@ -1006,7 +1006,7 @@ function LeadDetailDrawer({ lead, onClose, onStatusChange, onOutcomeStatusSaved,
                 </div>) : (<div className="space-y-3">
                   {/* Active Tours */}
                   {tours.filter(t => t.status === 'scheduled' || t.status === 'confirmed').length > 0 && (<div>
-                      <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Active tours</p>
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Active tours</p>
                       <div className="space-y-2">
                         {tours
                                 .filter(t => t.status === 'scheduled' || t.status === 'confirmed')
@@ -1016,7 +1016,7 @@ function LeadDetailDrawer({ lead, onClose, onStatusChange, onOutcomeStatusSaved,
 
                   {/* Past Tours */}
                   {tours.filter(t => t.status === 'completed' || t.status === 'cancelled' || t.status === 'no_show').length > 0 && (<div>
-                      <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2 mt-4">Past Tours</p>
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 mt-4">Past Tours</p>
                       <div className="space-y-2">
                         {tours
                                 .filter(t => t.status === 'completed' || t.status === 'cancelled' || t.status === 'no_show')
@@ -1030,14 +1030,14 @@ function LeadDetailDrawer({ lead, onClose, onStatusChange, onOutcomeStatusSaved,
 
           {activeTab === 'activity' && (<div>
               <LeadRecordHistory leadId={lead.id} controller={controller}/>
-              <h4 className="text-sm font-medium text-slate-700 mb-3">Activity Timeline</h4>
+              <h4 className="text-sm font-medium text-card-foreground mb-3">Activity Timeline</h4>
               <ActivityTimeline key={`${propertyId}:${lead.id}`} propertyId={propertyId} leadId={lead.id}/>
             </div>)}
 
           {activeTab === 'automation' && (<div>
               <LeadFollowupControls lead={lead} controller={controller}/>
-              <h4 className="text-sm font-medium text-slate-700 mb-3">Workflow Automation</h4>
-              {workflowLoading ? <p className="text-sm text-slate-500">Loading workflow…</p> : (workflow || !workflowError) && <WorkflowStatus workflow={workflow} onAction={handleWorkflowAction} busy={workflowBusy}/>}
+              <h4 className="text-sm font-medium text-card-foreground mb-3">Workflow Automation</h4>
+              {workflowLoading ? <p className="text-sm text-muted-foreground">Loading workflow…</p> : (workflow || !workflowError) && <WorkflowStatus workflow={workflow} onAction={handleWorkflowAction} busy={workflowBusy}/>}
               {workflowError && <p role="alert" className="mt-2 text-sm text-red-700">{workflowError} <button className="underline" onClick={() => void refreshWorkflow()}>Refresh workflow</button></p>}
               <WorkflowDeliveryHistory key={lead.id} leadId={lead.id} onSaved={() => void refreshWorkflow()}/>
             </div>)}
@@ -1214,17 +1214,17 @@ function LeadsWorkspace() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-            <Sparkles className="text-amber-500" size={24}/>
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+            <Users className="text-primary" aria-hidden="true" size={24}/>
             TourSpark
           </h1>
-          <p className="text-slate-500 mt-1">
+          <p className="text-muted-foreground mt-1">
             Lead management & automated follow-ups for {currentProperty?.name || 'your property'}
           </p>
         </div>
         
         <div className="flex items-center gap-3">
-          {selectedLeads.size > 0 && (<button onClick={handleBulkSyncToCRM} disabled={syncingToCRM || !recordController.canManage} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors shadow-lg shadow-teal-500/20 disabled:opacity-50">
+          {selectedLeads.size > 0 && (<button onClick={handleBulkSyncToCRM} disabled={syncingToCRM || !recordController.canManage} className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:brightness-95 transition-colors shadow-sm disabled:opacity-50">
               {syncingToCRM ? (<>
                   <Loader2 size={16} className="animate-spin"/>
                   Syncing...
@@ -1233,11 +1233,11 @@ function LeadsWorkspace() {
                   Sync to CRM ({selectedLeads.size})
                 </>)}
             </button>)}
-          <button onClick={fetchLeads} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50">
+          <button onClick={fetchLeads} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''}/>
             Refresh
           </button>
-          <button disabled={recordController.busy || !!recordController.pending || !recordController.canManage} onClick={() => setShowCreateModal(true)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-500/20">
+          <button disabled={recordController.busy || !!recordController.pending || !recordController.canManage} onClick={() => setShowCreateModal(true)} className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:brightness-95 transition-colors shadow-sm">
             <Plus size={16}/>
             Add Lead
           </button>
@@ -1250,15 +1250,15 @@ function LeadsWorkspace() {
             const Icon = config.icon;
             const count = statusSummary[key] || 0;
             return (<button key={key} onClick={() => setStatusFilter(statusFilter === key ? 'all' : key)} className={`p-4 rounded-xl border transition-all ${statusFilter === key
-                    ? 'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-500/20'
-                    : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                    ? 'border-ring bg-accent ring-2 ring-ring/20'
+                    : 'border-border bg-card hover:border-input'}`}>
               <div className="flex items-center gap-2 mb-1">
-                <Icon size={16} className={statusFilter === key ? 'text-indigo-600' : 'text-slate-400'}/>
-                <span className={`text-sm font-medium ${statusFilter === key ? 'text-indigo-600' : 'text-slate-600'}`}>
+                <Icon size={16} className={statusFilter === key ? 'text-primary' : 'text-slate-400'}/>
+                <span className={`text-sm font-medium ${statusFilter === key ? 'text-primary' : 'text-muted-foreground'}`}>
                   {config.label}
                 </span>
               </div>
-              <p className={`text-2xl font-bold ${statusFilter === key ? 'text-indigo-600' : 'text-slate-900'}`}>
+              <p className={`text-2xl font-bold ${statusFilter === key ? 'text-primary' : 'text-foreground'}`}>
                 {count}
               </p>
             </button>);
@@ -1300,7 +1300,7 @@ function LeadsWorkspace() {
         </div>)}
 
       {/* Filters Bar */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4">
+      <div className="bg-card rounded-xl border border-border p-4">
         <div className="flex flex-col sm:flex-row gap-3">
           {/* Search */}
           <div className="relative flex-1">
@@ -1308,7 +1308,7 @@ function LeadsWorkspace() {
             <input type="text" placeholder="Search leads by name, email, or phone..." value={search} onChange={(e) => {
             setSearch(e.target.value);
             setPage(1);
-        }} className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"/>
+        }} className="w-full pl-10 pr-4 py-2.5 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-ring"/>
           </div>
 
           {/* Source Filter */}
@@ -1316,7 +1316,7 @@ function LeadsWorkspace() {
             <select value={sourceFilter} onChange={(e) => {
             setSourceFilter(e.target.value);
             setPage(1);
-        }} className="appearance-none pl-4 pr-10 py-2.5 border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer">
+        }} className="appearance-none pl-4 pr-10 py-2.5 border border-border rounded-lg bg-card focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-ring cursor-pointer">
               <option value="all">All Sources</option>
               {data?.filters.sources.map(source => (<option key={source} value={source}>{source}</option>))}
             </select>
@@ -1329,7 +1329,7 @@ function LeadsWorkspace() {
                 setSourceFilter('all');
                 setSearch('');
                 setPage(1);
-            }} className="flex items-center gap-1.5 px-3 py-2 text-sm text-slate-600 hover:text-slate-900">
+            }} className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground">
               <X size={16}/>
               Clear filters
             </button>)}
@@ -1337,53 +1337,53 @@ function LeadsWorkspace() {
       </div>
 
       {/* Leads Table */}
-      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div className="bg-card rounded-xl border border-border overflow-hidden">
         {error ? (<div className="p-12 text-center">
             <div className="h-12 w-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <X className="text-red-500" size={24}/>
             </div>
-            <p className="text-slate-900 font-medium mb-1">Error loading leads</p>
-            <p className="text-slate-500 text-sm">{error}</p>
+            <p className="text-foreground font-medium mb-1">Error loading leads</p>
+            <p className="text-muted-foreground text-sm">{error}</p>
           </div>) : loading && !data ? (<div className="p-12 text-center">
-            <div className="animate-spin h-8 w-8 border-4 border-indigo-500 border-t-transparent rounded-full mx-auto mb-4"/>
-            <p className="text-slate-500">Loading leads...</p>
+            <div className="animate-spin h-8 w-8 border-4 border-ring border-t-transparent rounded-full mx-auto mb-4"/>
+            <p className="text-muted-foreground">Loading leads...</p>
           </div>) : data?.leads.length === 0 ? (<div className="p-12 text-center">
-            <div className="h-12 w-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <div className="h-12 w-12 bg-secondary rounded-full flex items-center justify-center mx-auto mb-4">
               <User className="text-slate-400" size={24}/>
             </div>
-            <p className="text-slate-900 font-medium mb-1">No leads found</p>
-            <p className="text-slate-500 text-sm mb-4">
+            <p className="text-foreground font-medium mb-1">No leads found</p>
+            <p className="text-muted-foreground text-sm mb-4">
               {search || statusFilter !== 'all' || sourceFilter !== 'all'
                 ? 'Try adjusting your filters'
                 : 'Get started by adding your first lead'}
             </p>
-            {!(search || statusFilter !== 'all' || sourceFilter !== 'all') && (<button disabled={recordController.busy || !!recordController.pending || !recordController.canManage} onClick={() => setShowCreateModal(true)} className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+            {!(search || statusFilter !== 'all' || sourceFilter !== 'all') && (<button disabled={recordController.busy || !!recordController.pending || !recordController.canManage} onClick={() => setShowCreateModal(true)} className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:brightness-95 transition-colors">
                 <Plus size={16}/>
                 Add Lead
               </button>)}
           </div>) : (<>
             <table className="w-full">
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-200">
+                <tr className="bg-muted border-b border-border">
                   <th className="px-4 py-3 text-left w-12">
-                    <input type="checkbox" checked={selectedLeads.size === data?.leads.length && data?.leads.length > 0} onChange={toggleSelectAll} className="w-4 h-4 text-teal-600 border-slate-300 rounded focus:ring-teal-500 cursor-pointer"/>
+                    <input type="checkbox" checked={selectedLeads.size === data?.leads.length && data?.leads.length > 0} onChange={toggleSelectAll} className="w-4 h-4 text-teal-600 border-input rounded focus:ring-teal-500 cursor-pointer"/>
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Lead
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Source
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Phone
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Last Touch
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-12">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider w-12">
                   </th>
                 </tr>
               </thead>
@@ -1393,18 +1393,18 @@ function LeadsWorkspace() {
             </table>
 
             {/* Pagination */}
-            {data && data.pagination.totalPages > 1 && (<div className="px-4 py-3 border-t border-slate-200 flex items-center justify-between">
-                <p className="text-sm text-slate-500">
+            {data && data.pagination.totalPages > 1 && (<div className="px-4 py-3 border-t border-border flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
                   Showing {((page - 1) * 25) + 1} to {Math.min(page * 25, totalLeads)} of {totalLeads} leads
                 </p>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-2 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-2 border border-border rounded-lg hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed">
                     <ChevronLeft size={18}/>
                   </button>
-                  <span className="text-sm text-slate-600">
+                  <span className="text-sm text-muted-foreground">
                     Page {page} of {data.pagination.totalPages}
                   </span>
-                  <button onClick={() => setPage(p => Math.min(data.pagination.totalPages, p + 1))} disabled={page === data.pagination.totalPages} className="p-2 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <button onClick={() => setPage(p => Math.min(data.pagination.totalPages, p + 1))} disabled={page === data.pagination.totalPages} className="p-2 border border-border rounded-lg hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed">
                     <ChevronRight size={18}/>
                   </button>
                 </div>

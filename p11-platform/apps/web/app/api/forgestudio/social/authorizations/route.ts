@@ -1,3 +1,4 @@
+import { propertyIdSchema } from '@/utils/property-setup/contracts'
 import { decisionNote } from '@/utils/actions/decision-note'
 import {NextRequest,NextResponse} from 'next/server'
 import {z} from 'zod'
@@ -6,8 +7,8 @@ import {createServiceClient} from '@/utils/supabase/admin'
 import {validatePropertyManagerAccess} from '@/utils/services/auth-guard'
 import {socialRpc} from '@/utils/forgestudio/social-security'
 import {ContentStoreError} from '@/utils/forgestudio/content-store'
-const querySchema=z.object({propertyId:z.string().uuid(),cursor:z.string().uuid().optional()})
-const mutationSchema=z.object({propertyId:z.string().uuid(),requestId:z.string().uuid(),authorizationId:z.string().uuid(),expectedVersion:z.number().int().positive(),action:z.enum(['apply','cancel']),accountIds:z.array(z.string().min(1).max(256)).max(100).optional(),reason:decisionNote(2000, 3)}).strict().refine(v=>v.action!=='apply'||!!v.accountIds?.length)
+const querySchema=z.object({propertyId:propertyIdSchema,cursor:z.string().uuid().optional()})
+const mutationSchema=z.object({propertyId:propertyIdSchema,requestId:z.string().uuid(),authorizationId:z.string().uuid(),expectedVersion:z.number().int().positive(),action:z.enum(['apply','cancel']),accountIds:z.array(z.string().min(1).max(256)).max(100).optional(),reason:decisionNote(2000, 3)}).strict().refine(v=>v.action!=='apply'||!!v.accountIds?.length)
 export async function GET(request:NextRequest){
  try{
   const {data:{user},error}=await(await createClient()).auth.getUser();if(error||!user)return NextResponse.json({error:'Unauthorized'},{status:401})

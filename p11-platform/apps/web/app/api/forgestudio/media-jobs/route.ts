@@ -1,3 +1,4 @@
+import { propertyIdSchema } from '@/utils/property-setup/contracts'
 import { decisionNote } from '@/utils/actions/decision-note'
 import {NextRequest,NextResponse} from 'next/server'
 import {z} from 'zod'
@@ -7,7 +8,7 @@ import {validatePropertyAccess} from '@/utils/services/auth-guard'
 import {enqueueMediaGeneration,mediaRpc,recoverMediaGeneration} from '@/utils/forgestudio/media-jobs'
 import {ContentStoreError} from '@/utils/forgestudio/content-store'
 const baseSchema = z.object({
-  propertyId: z.string().uuid(),
+  propertyId: propertyIdSchema,
   requestId: z.string().uuid(),
   prompt: z.string().min(10).max(4000),
   sourceAssetId: z.string().uuid().nullish(),
@@ -32,12 +33,12 @@ const requestSchema = z.discriminatedUnion('modality', [
 ])
 
 
-const decisionSchema=z.object({propertyId:z.string().uuid(),requestId:z.string().uuid(),jobId:z.string().uuid(),action:z.enum(['stop','recover']),expectedUpdatedAt:z.string().datetime({offset:true}),reason:decisionNote(2000, 3)}).strict()
+const decisionSchema=z.object({propertyId:propertyIdSchema,requestId:z.string().uuid(),jobId:z.string().uuid(),action:z.enum(['stop','recover']),expectedUpdatedAt:z.string().datetime({offset:true}),reason:decisionNote(2000, 3)}).strict()
 function failure(error:unknown){return NextResponse.json({error:error instanceof Error?error.message:'Media request unavailable'},{status:error instanceof ContentStoreError?error.statusCode:503})}
 async function actor(){const {data:{user}}=await(await createClient()).auth.getUser();return user}
 export async function GET(request:NextRequest){
  const user=await actor();if(!user)return NextResponse.json({error:'Unauthorized'},{status:401})
- const params=new URL(request.url).searchParams,parsed=z.string().uuid().safeParse(params.get('propertyId'))
+ const params=new URL(request.url).searchParams,parsed=propertyIdSchema.safeParse(params.get('propertyId'))
  if(!parsed.success)return NextResponse.json({error:'Valid property required'},{status:400})
  const access=await validatePropertyAccess(user.id,parsed.data);if(!access.authorized||!access.orgId)return NextResponse.json({error:'Forbidden'},{status:403})
  let query=createServiceClient().from('forgestudio_media_requests').select('id,state,input,asset_id,result_manifest,error_code,created_at,updated_at,model_started_at,lease_expires_at').eq('property_id',parsed.data).eq('org_id',access.orgId)

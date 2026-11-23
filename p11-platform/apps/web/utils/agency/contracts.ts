@@ -1,3 +1,4 @@
+import { propertyIdSchema } from '@/utils/property-setup/contracts'
 import {z} from 'zod'
 
 export const agencyProducts = ['siteforge','lumaleasing','propertyaudit','brandforge','tourspark','leadpulse','crm','forgestudio','reviewflow','marketvision','bi','knowledge','property','integrations','reports','pipelines','settings','team','platform'] as const
@@ -12,10 +13,10 @@ export const productLinks: Record<AgencyProduct,string> = {
 }
 const review = z.object({operation:z.literal('review'),product:z.enum(agencyProducts),sourceHash:hash,decision:z.enum(['investigate','watch','not_actionable']),reason:z.string().trim().min(3,'Explain your decision in at least three characters.').max(2000)}).strict()
 const cancel = z.object({operation:z.literal('cancel_unused'),inputHash:hash}).strict()
-export const agencyCommand = z.discriminatedUnion('operation',[review.extend({propertyId:id,requestId:id}),cancel.extend({propertyId:id,requestId:id})])
+export const agencyCommand = z.discriminatedUnion('operation',[review.extend({propertyId:propertyIdSchema,requestId:id}),cancel.extend({propertyId:propertyIdSchema,requestId:id})])
 export type AgencyCommand = z.infer<typeof agencyCommand>
 export type ReviewInput = z.infer<typeof review> & {propertyId:string}
-export const agencyQuery = z.object({propertyId:id,kind:z.enum(['board','history','decision']).default('board'),decisionId:id.optional(),before:z.string().regex(/^[1-9][0-9]{0,18}$/).refine(v=>/^[1-9][0-9]{0,18}$/.test(v)&&BigInt(v)<=BigInt('9223372036854775807')).optional()}).strict()
+export const agencyQuery = z.object({propertyId:propertyIdSchema,kind:z.enum(['board','history','decision']).default('board'),decisionId:id.optional(),before:z.string().regex(/^[1-9][0-9]{0,18}$/).refine(v=>/^[1-9][0-9]{0,18}$/.test(v)&&BigInt(v)<=BigInt('9223372036854775807')).optional()}).strict()
  .refine(v=>v.kind==='decision'?!!v.decisionId&&!v.before:v.kind==='history'?!v.decisionId:!v.decisionId&&!v.before)
 export const workSources = ['website_incident','social_publication','review_publication','market_source','market_extraction','market_brand','knowledge_search','report_delivery','crm_transfer','luma_request','luma_delivery','tour_work','tour_reminder','brand_import','unit_import','integration_authorization','report_schedule','pipeline_recovery','audit_invocation'] as const
 export const workSourceLabels:Record<typeof workSources[number],string> = {
@@ -25,7 +26,7 @@ export const workSourceLabels:Record<typeof workSources[number],string> = {
 }
 export const workItemSchema=z.object({source:z.enum(workSources),id,category:z.enum(['held','unconfirmed','incident']),state:z.string(),version_token:z.string(),opened_at:z.string().nullable(),changed_at:z.string().nullable()})
 export const currentWorkSchema=z.object({checkedSources:z.array(z.enum(workSources)),coverage:z.object({checkedSources:z.array(z.enum(workSources)),scope:z.enum(['new_work_only','account_or_org','recorded_actions','native_work']),detail:z.string()}).optional(),total:z.number().int().nonnegative(),heldCount:z.number().int().nonnegative(),unconfirmedCount:z.number().int().nonnegative(),incidentCount:z.number().int().nonnegative(),oldestOpenedAt:z.string().nullable(),fingerprint:z.string(),items:z.array(workItemSchema).max(5)})
-const legacyEvidenceSchema = z.object({ruleVersion:z.literal('recorded-failures-v1'),propertyId:id,orgId:id,product:z.enum(agencyProducts),windowStart:z.string(),capturedAt:z.string(),confirmedCount:z.number().int().nonnegative(),failedCount:z.number().int().nonnegative(),observedCount:z.number().int().nonnegative(),latestConfirmedAt:z.string().nullable(),eventFingerprint:z.string(),sourceHash:hash,failures:z.array(z.object({eventId:id,episodeId:id,action:z.string(),recordedAt:z.string()})).max(5)})
+const legacyEvidenceSchema = z.object({ruleVersion:z.literal('recorded-failures-v1'),propertyId:propertyIdSchema,orgId:propertyIdSchema,product:z.enum(agencyProducts),windowStart:z.string(),capturedAt:z.string(),confirmedCount:z.number().int().nonnegative(),failedCount:z.number().int().nonnegative(),observedCount:z.number().int().nonnegative(),latestConfirmedAt:z.string().nullable(),eventFingerprint:z.string(),sourceHash:hash,failures:z.array(z.object({eventId:id,episodeId:id,action:z.string(),recordedAt:z.string()})).max(5)})
 export const evidenceSchema=z.discriminatedUnion('ruleVersion',[
  legacyEvidenceSchema,
  legacyEvidenceSchema.extend({ruleVersion:z.literal('recorded-work-v2'),currentWork:currentWorkSchema}),
@@ -46,9 +47,9 @@ export function workExplanation(item:WorkItem){
  return 'This work is on hold. Review the saved reason and inputs in the product before deciding what to do next.'
 }
 
-export const reviewSchema = z.object({id,property_id:id,org_id:id,actor_id:id,kind:z.enum(['review','cancel_unused']),input:z.record(z.string(),z.unknown()),input_hash:hash,evidence:evidenceSchema.nullable(),decision:z.enum(['investigate','watch','not_actionable']).nullable(),reason:z.string().nullable(),created_at:z.string(),sequence:z.number().int()})
-export const boardSchema = z.object({state:z.literal('ready'),propertyId:id,canManage:z.boolean(),mode:z.literal('observe'),items:z.array(z.object({evidence:evidenceSchema,review:z.object({id,decision:z.enum(['investigate','watch','not_actionable']),reason:z.string(),createdAt:z.string()}).nullable()}))})
-export const historySchema = z.object({state:z.literal('ready'),propertyId:id,items:z.array(reviewSchema),nextBefore:z.string().nullable()})
-export const receiptSchema = z.object({state:z.enum(['ready','saved','replayed']),propertyId:id,decisionId:id,record:reviewSchema})
+export const reviewSchema = z.object({id,property_id:propertyIdSchema,org_id:propertyIdSchema,actor_id:id,kind:z.enum(['review','cancel_unused']),input:z.record(z.string(),z.unknown()),input_hash:hash,evidence:evidenceSchema.nullable(),decision:z.enum(['investigate','watch','not_actionable']).nullable(),reason:z.string().nullable(),created_at:z.string(),sequence:z.number().int()})
+export const boardSchema = z.object({state:z.literal('ready'),propertyId:propertyIdSchema,canManage:z.boolean(),mode:z.literal('observe'),items:z.array(z.object({evidence:evidenceSchema,review:z.object({id,decision:z.enum(['investigate','watch','not_actionable']),reason:z.string(),createdAt:z.string()}).nullable()}))})
+export const historySchema = z.object({state:z.literal('ready'),propertyId:propertyIdSchema,items:z.array(reviewSchema),nextBefore:z.string().nullable()})
+export const receiptSchema = z.object({state:z.enum(['ready','saved','replayed']),propertyId:propertyIdSchema,decisionId:id,record:reviewSchema})
 export type Board = z.infer<typeof boardSchema>
 export type ReviewRecord = z.infer<typeof reviewSchema>

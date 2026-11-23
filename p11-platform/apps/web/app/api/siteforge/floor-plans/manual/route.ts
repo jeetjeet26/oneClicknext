@@ -46,11 +46,12 @@ export async function GET(request: NextRequest) {
       ),
       service
         .from('property_websites')
-        .select('id, current_artifact_version_id, generation_status, updated_at')
+        .select('id, current_artifact_version_id, generation_status, version, target_domain, created_at, updated_at')
         .eq('property_id', parsed.data.propertyId)
         .eq('org_id', access.orgId)
         .not('current_artifact_version_id', 'is', null)
-        .order('updated_at', { ascending: false }),
+        .order('updated_at', { ascending: false })
+        .order('id'),
     ])
     if (websitesResult.error) {
       throw new Error(`Failed to load SiteForge websites: ${websitesResult.error.message}`)

@@ -588,3 +588,105 @@ on conflict (id) do update set
   status = 'approved',
   approved_at = excluded.approved_at,
   effective_at = excluded.effective_at;
+
+-- Alpha walkthrough for the existing local community. Product selection records
+-- onboarding intent. Provider authorization and publishing are separate.
+update public.properties
+set settings = jsonb_set(settings, '{onboarding}', '{
+  "version":1, "subjectKind":"real_estate_property", "scope":"community", "sector":"residential",
+  "transaction":"rental", "lifecycle":"operating", "offeringKind":"rental_unit", "primaryIntent":"tour",
+  "country":"US", "timezone":"America/Chicago", "canonicalName":"P11 Local Demo Property",
+  "aliases":"", "ownershipEntity":"Demo Property LLC", "managementCompany":"Demo Community Team",
+  "market":"Austin", "submarket":"Downtown",
+  "products":["website","leads","messaging","creative","intelligence","reviews","reporting"],
+  "setupOwner":"Local Admin", "launchTarget":"", "successMetric":"Tours booked", "successTarget":"10 per month",
+  "publicContact":{"name":"Demo leasing team","phone":"+15125550100","email":"leasing@p11.test","confirmed":true},
+  "tourUrl":"", "applicationUrl":"", "officeHours":"Weekdays 9 AM to 6 PM",
+  "brandMode":"existing", "brandVoice":"Warm and direct", "audience":"Apartment seekers",
+  "legalEntity":"Demo Property LLC", "jurisdiction":"Texas", "reviewer":"Local Admin", "sources":[]
+}'::jsonb)
+where id = '33333333-3333-3333-3333-333333333333';
+
+insert into public.widget_sessions (id, property_id, visitor_id, lead_id, message_count)
+values
+  ('de000000-0000-4000-8000-000000000001','33333333-3333-3333-3333-333333333333','local-demo-linked','66666666-6666-6666-6666-666666666666',2),
+  ('de000000-0000-4000-8000-000000000002','33333333-3333-3333-3333-333333333333','local-demo-anonymous',null,0)
+on conflict (id) do nothing;
+
+insert into public.conversations (id, property_id, lead_id, channel)
+values ('de000000-0000-4000-8000-000000000003','33333333-3333-3333-3333-333333333333','66666666-6666-6666-6666-666666666666','widget')
+on conflict (id) do nothing;
+
+insert into public.messages (id, conversation_id, role, content, created_at)
+values
+  ('de000000-0000-4000-8000-000000000004','de000000-0000-4000-8000-000000000003','user','Can I see a two-bedroom apartment?', now() - interval '10 minutes'),
+  ('de000000-0000-4000-8000-000000000005','de000000-0000-4000-8000-000000000003','assistant','Yes. The leasing team can show you our two-bedroom layout and pet amenities.', now() - interval '9 minutes')
+on conflict (id) do nothing;
+
+insert into public.forgestudio_config (property_id, is_active, brand_voice, auto_approve, auto_schedule)
+values ('33333333-3333-3333-3333-333333333333',true,'Warm, concise, and specific to the community.',false,false)
+on conflict (property_id) do update set is_active = true;
+
+insert into public.content_drafts (id, property_id, content_type, title, platform, caption, status)
+values ('de000000-0000-4000-8000-000000000006','33333333-3333-3333-3333-333333333333','social_post','Rooftop lounge tour (sample)','instagram','Take a look around the rooftop lounge on your next community tour.','draft')
+on conflict (id) do nothing;
+
+insert into public.reviewflow_config (property_id, is_active, auto_generate_responses, auto_respond_positive, auto_analyze_reviews)
+values ('33333333-3333-3333-3333-333333333333',true,false,false,false)
+on conflict (property_id) do update set is_active = true;
+
+insert into public.reviews (id, property_id, platform, platform_review_id, reviewer_name, rating, review_text, review_date, retrieval_method, source_completeness)
+values ('de000000-0000-4000-8000-000000000007','33333333-3333-3333-3333-333333333333','google','local-alpha-sample','Sample resident',4,'Sample review: The tour was helpful. Clearer parking directions would make arrival easier.',current_date - 2,'manual','sample')
+on conflict (id) do nothing;
+
+insert into public.competitors (id, property_id, name, notes)
+values ('de000000-0000-4000-8000-000000000008','33333333-3333-3333-3333-333333333333','Juniper Court (demo)','Synthetic comparison community for the local alpha walkthrough.')
+on conflict (id) do nothing;
+
+insert into public.market_source_captures (id, property_id, competitor_id, source_type, raw_ref)
+values ('de000000-0000-4000-8000-000000000009','33333333-3333-3333-3333-333333333333','de000000-0000-4000-8000-000000000008','manual','Local synthetic rent sheet')
+on conflict (id) do nothing;
+
+insert into public.competitor_units (id, competitor_id, unit_type, bedrooms, rent_min, rent_max, sqft_min, sqft_max, available_count, capture_id)
+values ('de000000-0000-4000-8000-000000000010','de000000-0000-4000-8000-000000000008','One bedroom',1,1750,1910,700,820,3,'de000000-0000-4000-8000-000000000009')
+on conflict (id) do nothing;
+
+insert into public.geo_queries (id, property_id, text, type, geo)
+values ('de000000-0000-4000-8000-000000000011','33333333-3333-3333-3333-333333333333','Which downtown Austin apartments offer a rooftop lounge?','local','Austin, TX')
+on conflict (id) do nothing;
+
+insert into public.lead_scores (id, lead_id, total_score, score_bucket, engagement_score, timing_score, model_version)
+values ('de000000-0000-4000-8000-000000000012','66666666-6666-6666-6666-666666666666',72,'warm',42,30,'local-sample')
+on conflict (id) do nothing;
+
+-- Populate the default 30-day chart and its comparison period.
+insert into public.fact_marketing_performance
+  (date, property_id, channel_id, source_account_id, currency_code, campaign_name, campaign_id, impressions, clicks, spend, conversions, raw_source)
+select current_date - age_days, '33333333-3333-3333-3333-333333333333', 'google_ads', '9999999999', 'USD',
+  'Neighborhood tours (sample)', 'local-alpha-tours', 520 + age_days * 3, 19 + age_days % 8, 38 + age_days % 12, 1 + age_days % 3, 'local-seed'
+from generate_series(1, 60) as days(age_days)
+on conflict (date, property_id, channel_id, source_account_id, campaign_id) do nothing;
+
+-- Add a near-term bookable slot alongside the fixed historical smoke-test fixture.
+insert into public.tour_slots (id, property_id, slot_date, start_time, end_time, max_bookings, current_bookings, is_available)
+values ('de000000-0000-4000-8000-000000000013','33333333-3333-3333-3333-333333333333',
+  date_trunc('week',current_date)::date + 7, '11:00','11:30',4,0,true)
+on conflict (id) do nothing;
+
+-- Build a draft through the same report operation as the console. No publication.
+do $demo$
+declare
+  community constant uuid := '33333333-3333-3333-3333-333333333333';
+  actor constant uuid := '11111111-1111-1111-1111-111111111111';
+  report_month date := (date_trunc('month',current_date) - interval '1 month')::date;
+  result jsonb;
+begin
+  if not exists (select 1 from public.delivery_reports where property_id = community and month = report_month) then
+    result := public.decide_delivery(gen_random_uuid(), actor, community,
+      jsonb_build_object('operation','report_draft','month',to_char(report_month,'YYYY-MM')));
+    if result->>'state' is distinct from 'saved' then
+      raise exception 'Local sample report was not prepared: %', result->>'state';
+    end if;
+  end if;
+end;
+$demo$;

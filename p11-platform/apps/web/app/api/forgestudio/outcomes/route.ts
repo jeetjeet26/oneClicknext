@@ -1,3 +1,4 @@
+import { propertyIdSchema } from '@/utils/property-setup/contracts'
 import {NextRequest,NextResponse} from 'next/server'
 import {z} from 'zod'
 import {createClient} from '@/utils/supabase/server'
@@ -7,16 +8,16 @@ import {ContentStoreError} from '@/utils/forgestudio/content-store'
 import {measurementRpc,requestPublicationMetrics} from '@/utils/forgestudio/engagement-sync'
 const uuid=z.string().uuid(),stamp=z.string().datetime({offset:true}),count=z.number().int().min(0).max(1_000_000_000_000).nullable().optional()
 const metrics=z.object({impressions:count,reach:count,clicks:count,reactions:count,comments:count,shares:count,saves:count,video_views:count,video_completions:count}).strict()
-const base=z.object({requestId:uuid,propertyId:uuid,publicationId:uuid})
+const base=z.object({requestId:uuid,propertyId:propertyIdSchema,publicationId:uuid})
 const requestSchema=z.discriminatedUnion('action',[base.extend({action:z.literal('request')}),base.extend({action:z.literal('report'),metrics,observedAt:stamp,source:z.string().trim().min(3).max(2000),reason:z.string().trim().min(3).max(2000)})])
-const reviewBase=z.object({requestId:uuid,propertyId:uuid,expectedVersion:z.number().int().positive(),reason:z.string().trim().min(3).max(2000)})
+const reviewBase=z.object({requestId:uuid,propertyId:propertyIdSchema,expectedVersion:z.number().int().positive(),reason:z.string().trim().min(3).max(2000)})
 const reviewSchema=z.discriminatedUnion('action',[reviewBase.extend({action:z.literal('review_metrics'),measurementId:uuid,decision:z.enum(['included','excluded'])}),reviewBase.extend({action:z.literal('review_attribution'),eventId:uuid,decision:z.enum(['active','excluded'])})])
 function failure(error:unknown){return NextResponse.json({error:error instanceof ContentStoreError?error.message:'Saved outcome evidence could not be loaded. Reload to try again.'},{status:error instanceof ContentStoreError?error.statusCode:503})}
 async function user(){const {data:{user}}=await(await createClient()).auth.getUser();return user}
 function pageCursor(value:string|null){if(!value)return null;const [time,id,...rest]=value.split('|');if(rest.length||!stamp.safeParse(time).success||!uuid.safeParse(id).success)throw new ContentStoreError('Invalid results page',400);return {time,id}}
 export async function GET(request:NextRequest){
  const actor=await user();if(!actor)return NextResponse.json({error:'Unauthorized'},{status:401})
- const params=new URL(request.url).searchParams,property=uuid.safeParse(params.get('propertyId'))
+ const params=new URL(request.url).searchParams,property=propertyIdSchema.safeParse(params.get('propertyId'))
  if(!property.success)return NextResponse.json({error:'Valid property required'},{status:400})
  const access=await validatePropertyAccess(actor.id,property.data);if(!access.authorized||!access.orgId)return NextResponse.json({error:'Forbidden'},{status:403})
  try{

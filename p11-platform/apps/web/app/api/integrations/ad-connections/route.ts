@@ -2,6 +2,10 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
 import { logAuditEvent } from '@/utils/audit'
+import { isPlatformOperator } from '@/utils/services/platform-operator'
+import { validatePropertyAccess, validatePropertyManagerAccess } from '@/utils/services/auth-guard'
+
+const CONNECTION_COLUMNS = 'id,property_id,platform,account_id,account_name,manager_account_id,is_active,connected_by,connected_at,created_at,updated_at,last_sync_at,last_sync_status,last_synced_at,last_imported_at,error_count,currency,account_timezone'
 
 // GET - List all ad account connections for a property or org
 export async function GET(request: NextRequest) {
@@ -13,7 +17,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const supabase = createServiceClient()
+  // The authenticated client keeps community-level RLS active for an org-wide list.
+  const supabase = supabaseAuth
 
   try {
     const { searchParams } = new URL(request.url)
@@ -23,7 +28,7 @@ export async function GET(request: NextRequest) {
     // Get user's profile
     const { data: profile } = await supabase
       .from('profiles')
-      .select('org_id')
+      .select('org_id, role')
       .eq('id', user.id)
       .single()
 
@@ -31,11 +36,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'No organization found' }, { status: 400 })
     }
 
+    if (propertyId !== null && !(await validatePropertyAccess(user.id, propertyId)).authorized) {
+      return NextResponse.json({ error: 'Community access is required' }, { status: 403 })
+    }
+
     // Build query
     let query = supabase
       .from('ad_account_connections')
       .select(`
-        *,
+        ${CONNECTION_COLUMNS},
         properties (id, name),
         connected_by_profile:profiles!ad_account_connections_connected_by_fkey (full_name)
       `)
@@ -49,14 +58,25 @@ export async function GET(request: NextRequest) {
       query = query.eq('platform', platform)
     }
 
-    const { data: connections, error } = await query.order('created_at', { ascending: false })
+    const [{ data: connections, error }, management] = await Promise.all([
+      query.order('created_at', { ascending: false }),
+      propertyId && ['admin', 'manager'].includes(profile.role ?? '')
+        ? validatePropertyManagerAccess(user.id, propertyId)
+        : null,
+    ])
 
     if (error) {
       console.error('Error fetching ad connections:', error)
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    return NextResponse.json({ connections })
+    if (!propertyId) return NextResponse.json({ connections })
+    const canManage = management?.authorized === true
+    return NextResponse.json({
+      connections,
+      canManage,
+      canLink: canManage && isPlatformOperator(user.id, profile.role),
+    })
   } catch (error) {
     console.error('Ad connections API error:', error)
     return NextResponse.json({ error: 'Server error' }, { status: 500 })
@@ -108,9 +128,14 @@ export async function POST(request: NextRequest) {
 
     const userRole = profile.role ?? ''
 
-    // Check if user has permission
-    if (!['admin', 'manager'].includes(userRole)) {
+    // Linking an arbitrary account lets the import worker use shared provider
+    // credentials on its behalf. Only a platform operator may provision it.
+    if (!isPlatformOperator(user.id, userRole)) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
+    }
+
+    if (typeof property_id !== 'string' || !(await validatePropertyManagerAccess(user.id, property_id)).authorized) {
+      return NextResponse.json({ error: 'Property management access is required' }, { status: 403 })
     }
 
     // Verify the property belongs to the user's org
@@ -156,7 +181,7 @@ export async function POST(request: NextRequest) {
         is_active: true,
         connected_by: user.id,
       })
-      .select()
+      .select(CONNECTION_COLUMNS)
       .single()
 
     if (error) {
@@ -202,6 +227,7 @@ export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const connectionId = searchParams.get('id')
+    const propertyId = searchParams.get('property_id')
 
     if (!connectionId) {
       return NextResponse.json({ error: 'Connection ID is required' }, { status: 400 })
@@ -226,15 +252,20 @@ export async function DELETE(request: NextRequest) {
     }
 
     // Get the connection before deleting for audit log
-    const { data: connectionToDelete } = await supabase
+    let connectionQuery = supabase
       .from('ad_account_connections')
-      .select('*, properties(name)')
+      .select('id,property_id,platform,account_id,account_name,properties(name)')
       .eq('id', connectionId)
       .eq('org_id', profile.org_id)
-      .single()
+    if (propertyId !== null) connectionQuery = connectionQuery.eq('property_id', propertyId)
+    const { data: connectionToDelete } = await connectionQuery.single()
 
     if (!connectionToDelete) {
       return NextResponse.json({ error: 'Connection not found' }, { status: 404 })
+    }
+
+    if (!connectionToDelete.property_id || !(await validatePropertyManagerAccess(user.id, connectionToDelete.property_id)).authorized) {
+      return NextResponse.json({ error: 'Property management access is required' }, { status: 403 })
     }
 
     // Delete the connection
@@ -243,6 +274,7 @@ export async function DELETE(request: NextRequest) {
       .delete()
       .eq('id', connectionId)
       .eq('org_id', profile.org_id)
+      .eq('property_id', connectionToDelete.property_id)
 
     if (error) {
       console.error('Error deleting ad connection:', error)
@@ -309,6 +341,19 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 
+    const { data: existingConnection, error: readError } = await supabase
+      .from('ad_account_connections')
+      .select('id,property_id')
+      .eq('id', id)
+      .eq('org_id', profile.org_id)
+      .single()
+    if (readError || !existingConnection) {
+      return NextResponse.json({ error: 'Connection not found' }, { status: 404 })
+    }
+    if (!existingConnection.property_id || !(await validatePropertyManagerAccess(user.id, existingConnection.property_id)).authorized) {
+      return NextResponse.json({ error: 'Property management access is required' }, { status: 403 })
+    }
+
     // Update the connection
     const { data: connection, error } = await supabase
       .from('ad_account_connections')
@@ -318,7 +363,8 @@ export async function PATCH(request: NextRequest) {
       })
       .eq('id', id)
       .eq('org_id', profile.org_id)
-      .select()
+      .eq('property_id', existingConnection.property_id)
+      .select(CONNECTION_COLUMNS)
       .single()
 
     if (error) {

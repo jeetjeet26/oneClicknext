@@ -114,7 +114,7 @@ export default function DashboardPage() {
       case "message_in":
         return <MessageSquare size={14} className="text-blue-500" />;
       case "message_out":
-        return <Bot size={14} className="text-[#648693]" />;
+        return <Bot size={14} className="text-primary" />;
     }
   };
 
@@ -124,17 +124,17 @@ export default function DashboardPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <p className="console-kicker">Your workspace</p>
-          <h1 className="text-[29px] font-semibold text-slate-900">
+          <h1 className="text-[29px] font-semibold text-foreground">
             Property overview
           </h1>
-          <p className="text-slate-500 mt-1">
+          <p className="text-muted-foreground mt-1">
             Your last 30 days at {currentProperty?.name || "your property"}
           </p>
         </div>
         <button
           onClick={fetchData}
           disabled={loading}
-          className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium text-slate-700 disabled:opacity-50"
+          className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-lg hover:bg-muted transition-colors text-sm font-medium text-card-foreground disabled:opacity-50"
         >
           <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
           Refresh
@@ -224,16 +224,16 @@ export default function DashboardPage() {
       {/* Main Content Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Recent activity */}
-        <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-6">
+        <div className="lg:col-span-2 bg-card rounded-xl border border-border p-6">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-lg font-semibold text-slate-900">
+            <h2 className="text-lg font-semibold text-foreground">
               Recent activity
             </h2>
             <Link
-              href="/dashboard/intelligence"
-              className="text-sm text-[#a53212] hover:text-[#78260e] flex items-center gap-1"
+              href="/dashboard/intelligence?section=campaigns"
+              className="text-sm text-primary hover:text-[#78260e] flex items-center gap-1"
             >
-              View performance
+              Campaign performance
               <ArrowRight size={14} />
             </Link>
           </div>
@@ -257,7 +257,7 @@ export default function DashboardPage() {
                   key={activity.id}
                   className={`flex items-start gap-3 pb-4 ${
                     idx < data.recentActivity.length - 1
-                      ? "border-b border-slate-100"
+                      ? "border-b border-border"
                       : ""
                   }`}
                 >
@@ -267,16 +267,16 @@ export default function DashboardPage() {
                         ? "bg-emerald-50"
                         : activity.type === "message_in"
                           ? "bg-blue-50"
-                          : "bg-indigo-50"
+                          : "bg-accent"
                     }`}
                   >
                     {getActivityIcon(activity.type)}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-900">
+                    <p className="text-sm font-medium text-foreground">
                       {activity.title}
                     </p>
-                    <p className="text-xs text-slate-500 truncate">
+                    <p className="text-xs text-muted-foreground truncate">
                       {activity.subtitle}
                     </p>
                   </div>
@@ -290,10 +290,10 @@ export default function DashboardPage() {
             </div>
           ) : (
             <div className="text-center py-12">
-              <div className="h-12 w-12 bg-slate-100 rounded-xl flex items-center justify-center mx-auto mb-3">
+              <div className="h-12 w-12 bg-secondary rounded-xl flex items-center justify-center mx-auto mb-3">
                 <Zap size={24} className="text-slate-400" />
               </div>
-              <p className="text-slate-500 text-sm mb-1">{data ? "No recent activity" : "Activity unavailable"}</p>
+              <p className="text-muted-foreground text-sm mb-1">{data ? "No recent activity" : "Activity unavailable"}</p>
               <p className="text-slate-400 text-xs">
                 {data ? "Activity will appear here as leads come in and conversations happen." : "Try refreshing to load recent activity."}
               </p>
@@ -304,8 +304,8 @@ export default function DashboardPage() {
         {/* Quick Stats & Actions */}
         <div className="space-y-6">
           {/* Performance Summary */}
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <h3 className="text-lg font-semibold text-slate-900 mb-4">
+          <div className="bg-card rounded-xl border border-border p-6">
+            <h3 className="text-lg font-semibold text-foreground mb-4">
               Performance
             </h3>
             {!loading && !hasMarketingData && (
@@ -316,16 +316,16 @@ export default function DashboardPage() {
             <div className="space-y-4">
               <div>
                 <div className="flex justify-between text-sm mb-1.5">
-                  <span className="text-slate-600">Impressions</span>
-                  <span className="font-medium text-slate-900">
+                  <span className="text-muted-foreground">Impressions</span>
+                  <span className="font-medium text-foreground">
                     {loading
                       ? "..."
                       : hasMarketingData ? (data?.summary.impressions ?? 0).toLocaleString() : "Unavailable"}
                   </span>
                 </div>
-                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div className="h-2 bg-secondary rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-[#668a97] rounded-full transition-all duration-500"
+                    className="h-full bg-primary rounded-full transition-all duration-500"
                     style={{
                       width:
                         loading || !data?.summary.impressions ? "0%" : "100%",
@@ -335,16 +335,16 @@ export default function DashboardPage() {
               </div>
               <div>
                 <div className="flex justify-between text-sm mb-1.5">
-                  <span className="text-slate-600">Clicks</span>
-                  <span className="font-medium text-slate-900">
+                  <span className="text-muted-foreground">Clicks</span>
+                  <span className="font-medium text-foreground">
                     {loading
                       ? "..."
                       : hasMarketingData ? (data?.summary.clicks ?? 0).toLocaleString() : "Unavailable"}
                   </span>
                 </div>
-                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div className="h-2 bg-secondary rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-[#8fa696] rounded-full transition-all duration-500"
+                    className="h-full bg-neutral-500 rounded-full transition-all duration-500"
                     style={{
                       width: loading
                         ? "0%"
@@ -357,16 +357,16 @@ export default function DashboardPage() {
               </div>
               <div>
                 <div className="flex justify-between text-sm mb-1.5">
-                  <span className="text-slate-600">Click-through rate</span>
-                  <span className="font-medium text-slate-900">
+                  <span className="text-muted-foreground">Click-through rate</span>
+                  <span className="font-medium text-foreground">
                     {loading
                       ? "..."
                       : hasMarketingData ? `${(data?.summary.ctr ?? 0).toFixed(2)}%` : "Unavailable"}
                   </span>
                 </div>
-                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div className="h-2 bg-secondary rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-[#bca98d] rounded-full transition-all duration-500"
+                    className="h-full bg-neutral-400 rounded-full transition-all duration-500"
                     style={{
                       width: loading
                         ? "0%"
@@ -379,16 +379,16 @@ export default function DashboardPage() {
           </div>
 
           {/* Property knowledge Status */}
-          <div className="bg-[#eef3f3] rounded-xl border border-[#dce6e7] p-6">
+          <div className="bg-secondary rounded-xl border border-border p-6">
             <div className="flex items-center gap-3 mb-4">
-              <div className="h-10 w-10 bg-white rounded-lg flex items-center justify-center shadow-sm">
-                <FileText size={20} className="text-[#648693]" />
+              <div className="h-10 w-10 bg-card rounded-lg flex items-center justify-center shadow-sm">
+                <FileText size={20} className="text-primary" />
               </div>
               <div>
-                <h3 className="font-semibold text-slate-900">
+                <h3 className="font-semibold text-foreground">
                   Community knowledge
                 </h3>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted-foreground">
                   {loading
                     ? "..."
                     : data ? `${data.metrics.documentsCount ?? 0} document sections` : "Knowledge status unavailable"}
@@ -397,30 +397,30 @@ export default function DashboardPage() {
             </div>
             <Link
               href="/dashboard/community?section=knowledge"
-              className="block w-full py-2.5 bg-white text-center text-sm font-medium text-[#a53212] rounded-lg border border-[#efd8cd] hover:bg-[#fff5f0] transition-colors"
+              className="block w-full py-2.5 bg-card text-center text-sm font-medium text-primary rounded-lg border border-[#efd8cd] hover:bg-[#fff5f0] transition-colors"
             >
               Manage knowledge
             </Link>
           </div>
 
           {/* Quick actions */}
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <h3 className="text-lg font-semibold text-slate-900 mb-4">
+          <div className="bg-card rounded-xl border border-border p-6">
+            <h3 className="text-lg font-semibold text-foreground mb-4">
               Quick actions
             </h3>
             <div className="space-y-2">
               <Link
                 href="/dashboard/intelligence?section=campaigns"
-                className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-50 transition-colors group"
+                className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted transition-colors group"
               >
-                <div className="h-9 w-9 bg-[#e8eff1] rounded-lg flex items-center justify-center group-hover:bg-indigo-200 transition-colors">
-                  <TrendingUp size={18} className="text-[#a53212]" />
+                <div className="h-9 w-9 bg-muted rounded-lg flex items-center justify-center group-hover:bg-accent transition-colors">
+                  <TrendingUp size={18} className="text-primary" />
                 </div>
                 <div className="flex-1">
-                  <p className="text-sm font-medium text-slate-900">
+                  <p className="text-sm font-medium text-foreground">
                     Campaign performance
                   </p>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-muted-foreground">
                     Marketing results and saved reports
                   </p>
                 </div>
@@ -428,16 +428,16 @@ export default function DashboardPage() {
               </Link>
               <Link
                 href="/dashboard/luma"
-                className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-50 transition-colors group"
+                className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted transition-colors group"
               >
-                <div className="h-9 w-9 bg-[#edf1e9] rounded-lg flex items-center justify-center group-hover:bg-purple-200 transition-colors">
-                  <MessageSquare size={18} className="text-[#6e8363]" />
+                <div className="h-9 w-9 bg-muted rounded-lg flex items-center justify-center group-hover:bg-accent transition-colors">
+                  <MessageSquare size={18} className="text-primary" />
                 </div>
                 <div className="flex-1">
-                  <p className="text-sm font-medium text-slate-900">
+                  <p className="text-sm font-medium text-foreground">
                     Open conversations
                   </p>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-muted-foreground">
                     Review inquiries and test the leasing assistant
                   </p>
                 </div>

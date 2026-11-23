@@ -200,7 +200,23 @@ export async function readPortal(
       limitations:
         "Recorded inquiry cohorts; cross-system duplicate people and unreported outcomes may remain.",
     };
+    const campaignTotals = new Map<string, NonNullable<Funnel["campaigns"]>[number]>();
+    const bookingTotals = new Map<string, NonNullable<Funnel["bookingCampaigns"]>[number]>();
     for (const f of values) {
+      for (const row of f.bookingCampaigns ?? []) {
+        const key = JSON.stringify([row.source,row.medium,row.campaign]);
+        const prior = bookingTotals.get(key);
+        if (prior) prior.bookings += row.bookings;
+        else bookingTotals.set(key,{...row});
+      }
+      for (const row of f.campaigns ?? []) {
+        const key = JSON.stringify([row.captureSource,row.source,row.medium,row.campaign]);
+        const prior = campaignTotals.get(key);
+        if (prior) {
+          prior.inquiries += row.inquiries;
+          prior.booked += row.booked;
+        } else campaignTotals.set(key,{...row});
+      }
       for (const metric of [
         "inquiries",
         "booked",
@@ -239,6 +255,8 @@ export async function readPortal(
           entry[metric] += row[metric];
       }
     }
+    result.bookingCampaigns = [...bookingTotals.values()].sort((a,b) => b.bookings-a.bookings);
+    result.campaigns = [...campaignTotals.values()].sort((a,b) => b.inquiries-a.inquiries);
     return result;
   };
   const saved = published.reports as {

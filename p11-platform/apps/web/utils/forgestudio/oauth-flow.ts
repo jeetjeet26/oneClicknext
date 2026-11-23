@@ -1,3 +1,4 @@
+import { propertyIdSchema } from '@/utils/property-setup/contracts'
 import {createHash,randomBytes,randomUUID} from 'node:crypto'
 import {NextRequest,NextResponse} from 'next/server'
 import {z} from 'zod'
@@ -18,7 +19,7 @@ export async function beginSocialAuthorization(request:NextRequest,platform:Soci
  try{
   const {data:{user},error}=await(await createClient()).auth.getUser();if(error||!user)return connectionsRedirect({error:'Unauthorized'})
   const query=new URL(request.url).searchParams,propertyId=query.get('propertyId'),requestId=query.get('requestId')||randomUUID()
-  if(!z.string().uuid().safeParse(propertyId).success||!z.string().uuid().safeParse(requestId).success)return connectionsRedirect({error:'Invalid property or request'})
+  if(!propertyIdSchema.safeParse(propertyId).success||!z.string().uuid().safeParse(requestId).success)return connectionsRedirect({error:'Invalid property or request'})
   if(!(await validatePropertyManagerAccess(user.id,propertyId!)).authorized)return connectionsRedirect({error:'Forbidden'})
   if(process.env.OUTBOUND_DELIVERY_PAUSED==='true')return connectionsRedirect({propertyId:propertyId!,error:'Authorization is paused in this environment'})
   const c=await getSocialAppCredentials(propertyId!,configPlatform(platform));if(!c)return connectionsRedirect({propertyId:propertyId!,setup_required:platform})

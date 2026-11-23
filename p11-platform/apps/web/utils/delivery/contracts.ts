@@ -1,3 +1,4 @@
+import { propertyIdSchema } from '@/utils/property-setup/contracts'
 import { z } from "zod";
 const id = z.string().uuid();
 export const calendarDate = z
@@ -223,13 +224,13 @@ export const deliveryCommand = z
   .object({
     requestId: id,
     expectedActorId: id,
-    propertyId: id,
+    propertyId: propertyIdSchema,
     input: deliveryInput,
   })
   .strict();
 export const deliveryQuery = z
   .object({
-    propertyId: id,
+    propertyId: propertyIdSchema,
     offset: z.coerce.number().int().min(0).max(100000).default(0),
     search: z.string().max(100).default(""),
     start: calendarDate.optional(),
@@ -255,6 +256,8 @@ export type Funnel = {
     Funnel,
     "inquiries" | "booked" | "attended" | "applications" | "leases"
   >)[];
+  campaigns?: { captureSource: string; source: string | null; medium: string | null; campaign: string | null; inquiries: number; booked: number }[];
+  bookingCampaigns?: { source: string | null; medium: string | null; campaign: string | null; bookings: number }[];
   reportedRecords: number;
   lastOutcomeUpdate: string | null;
   limitations: string;

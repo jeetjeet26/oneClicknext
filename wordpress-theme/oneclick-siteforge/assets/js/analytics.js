@@ -123,6 +123,7 @@
       window.localStorage.removeItem(consentKey);
       window.localStorage.removeItem(sessionKey);
       sessionId = null;
+      document.dispatchEvent(new CustomEvent('siteforge:consent-changed', {detail:{state:'unknown'}}));
       showConsent();
     },
     state: consentState

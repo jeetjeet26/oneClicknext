@@ -7,7 +7,7 @@ vi.mock('./messaging',async importOriginal=>({...await importOriginal<object>(),
 import {processWorkflowDeliveries,workflowContent} from './workflow-delivery'
 const work={id:'delivery',lead_workflow_id:'workflow',state:'running',channel:'email',recipient:'guest@example.invalid',lease_token:'token',body:null,subject:null,sender:null,snapshot:{firstName:'Guest',lastName:'Example',propertyName:'Fixture',tourLink:'https://example.invalid/tour',template:{body:'Hello {first_name} at {property_name}. {tour_link}',subject:'Hello'}}} as WorkflowDelivery
 function rpc(name:string){if(name==='pending_workflow_deliveries')return {candidates:['workflow'],review:0};if(name==='prepare_workflow_delivery'||name==='start_workflow_delivery')return structuredClone(work);return true}
-beforeEach(()=>{vi.resetAllMocks();vi.stubEnv('RESEND_FROM_EMAIL','sender@example.invalid');vi.stubEnv('WORKFLOW_DELIVERY_PAUSED','false');d.paused.mockReturnValue(false);d.configured.mockReturnValue({email:true,sms:true});d.rpc.mockImplementation(async name=>({data:rpc(name),error:null}));d.email.mockResolvedValue({success:true,messageId:'receipt'});d.sms.mockResolvedValue({success:true,messageId:'sms-receipt'})})
+beforeEach(()=>{vi.resetAllMocks();vi.stubEnv('RESEND_FROM_EMAIL','sender@example.invalid');vi.stubEnv('WORKFLOW_DELIVERY_PAUSED','false');vi.stubEnv('TELNYX_PUBLIC_KEY','test-key');d.paused.mockReturnValue(false);d.configured.mockReturnValue({email:true,sms:true});d.rpc.mockImplementation(async name=>({data:rpc(name),error:null}));d.email.mockResolvedValue({success:true,messageId:'receipt'});d.sms.mockResolvedValue({success:true,messageId:'sms-receipt'})})
 afterEach(()=>vi.unstubAllEnvs())
 it('does no database or transport work while paused',async()=>{d.paused.mockReturnValue(true);expect((await processWorkflowDeliveries()).errors).toEqual(['Paused']);expect(d.rpc).not.toHaveBeenCalled();expect(d.email).not.toHaveBeenCalled()})
 it('also honors the workflow-only hold',async()=>{vi.stubEnv('WORKFLOW_DELIVERY_PAUSED','true');await processWorkflowDeliveries();expect(d.rpc).not.toHaveBeenCalled()})
@@ -25,3 +25,11 @@ it('continues independent work after a failed claim',async()=>{let claims=0;d.rp
 it('fails closed on queue read errors',async()=>{d.rpc.mockResolvedValue({error:{message:'offline'}});await expect(processWorkflowDeliveries()).rejects.toThrow('could not be loaded');expect(d.email).not.toHaveBeenCalled()})
 it('uses saved content and sender for reviewed SMS retries',async()=>{const saved={...work,channel:'sms',recipient:'+15550000000',body:'Pinned text',sender:'+15550000001'};d.rpc.mockImplementation(async n=>({data:n==='prepare_workflow_delivery'?saved:rpc(n)}));await processWorkflowDeliveries();expect(d.sms).toHaveBeenCalledWith({to:'+15550000000',channel:'sms',body:'Pinned text',from:'+15550000001'});expect(d.email).not.toHaveBeenCalled()})
 it('holds unknown template variables and internal dashboard links',()=>{const invalid=structuredClone(work);invalid.snapshot.tourLink='https://example.invalid/dashboard/leads';expect(workflowContent(invalid).issue).toBe('template_variables_missing');invalid.snapshot.tourLink=null;expect(workflowContent(invalid).issue).toBe('template_variables_missing');expect(workflowContent(work).body).toContain('https://example.invalid/tour')})
+
+it('holds marketing SMS when inbound opt-out verification is unconfigured',async()=>{
+  vi.stubEnv('TELNYX_PUBLIC_KEY','')
+  d.rpc.mockImplementation(async name=>({data:name==='prepare_workflow_delivery'?{...work,channel:'sms'}:name==='start_workflow_delivery'?null:rpc(name)}))
+  expect((await processWorkflowDeliveries()).review).toBe(1)
+  expect(d.rpc).toHaveBeenCalledWith('start_workflow_delivery',expect.objectContaining({p_issue:'configuration_missing'}))
+  expect(d.sms).not.toHaveBeenCalled()
+})

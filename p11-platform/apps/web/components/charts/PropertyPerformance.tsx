@@ -89,13 +89,6 @@ function PropertyBI() {
     return (<div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Campaign performance</h1>
-          <p className="text-slate-500 mt-1">
-            Performance analytics for {currentProperty?.name || 'your property'}
-          </p>
-        </div>
-        
         <div className="flex flex-wrap items-center gap-3">
           <button onClick={() => { setData(null); setSelectedCampaign(null); setCompareEnabled(!compareEnabled); }} className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${compareEnabled
             ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
@@ -185,8 +178,9 @@ function PropertyBI() {
       {error && (<div role="alert" className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
           <AlertCircle className="text-red-500 flex-shrink-0 mt-0.5" size={20}/>
           <div>
-            <p className="text-red-800 font-medium">Error loading data</p>
+            <p className="text-red-800 font-medium">Campaign performance unavailable</p>
             <p className="text-red-600 text-sm mt-1">{error}</p>
+            <button type="button" className="mt-2 text-sm underline" onClick={fetchData} disabled={loading}>Retry report</button>
           </div>
         </div>)}
 
@@ -214,7 +208,7 @@ function PropertyBI() {
                       </div>
                       <p className="text-slate-500">No performance data available</p>
                       <p className="text-sm text-slate-400 mt-1">
-                        Run your data pipelines to populate this chart
+                        No campaign records matched this property, period and filters.
                       </p>
                     </div>)}
                 </div>

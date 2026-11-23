@@ -76,6 +76,37 @@ export function FunnelSummary({
           </div>
         </details>
       )}
+      {!!current.campaigns?.length && (
+        <details className="mt-4 text-sm">
+          <summary className="cursor-pointer">View acquisition campaigns</summary>
+          <div className="mt-3 overflow-auto">
+            <table className="console-table">
+              <thead><tr><th>Capture channel</th><th>UTM source</th><th>Medium</th><th>Campaign</th><th>Inquiries</th><th>Tours booked</th></tr></thead>
+              <tbody>{current.campaigns.map(row => (
+                <tr key={JSON.stringify([row.captureSource,row.source,row.medium,row.campaign])}>
+                  <td>{row.captureSource}</td><td>{row.source || '—'}</td><td>{row.medium || '—'}</td><td>{row.campaign || '—'}</td><td>{row.inquiries}</td><td>{row.booked}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </details>
+      )}
+      {!!current.bookingCampaigns?.length && (
+        <details className="mt-4 text-sm">
+          <summary className="cursor-pointer">View campaigns on booking visits</summary>
+          <p className="mt-2 text-slate-600">Counts bookings created during this period, including returning leads. A visitor’s original inquiry can belong to a different campaign.</p>
+          <div className="mt-3 overflow-auto">
+            <table className="console-table">
+              <thead><tr><th>UTM source</th><th>Medium</th><th>Campaign</th><th>Bookings</th></tr></thead>
+              <tbody>{current.bookingCampaigns.map(row => (
+                <tr key={JSON.stringify([row.source,row.medium,row.campaign])}>
+                  <td>{row.source || '—'}</td><td>{row.medium || '—'}</td><td>{row.campaign || '—'}</td><td>{row.bookings}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </details>
+      )}
     </section>
   );
 }

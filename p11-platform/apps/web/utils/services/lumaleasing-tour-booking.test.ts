@@ -25,3 +25,8 @@ it.each([['2026-03-08','02:30'],['2026-11-01','01:30'],['2026-02-28','09:00']])(
 it('never reserves after a provider availability failure',async()=>{
  d.busy.mockRejectedValue(new Error('Availability unavailable'));await expect(bookLumaLeasingTour(params)).rejects.toThrow('unavailable');expect(d.rpc).not.toHaveBeenCalled()
 })
+it('stores the tagged booking visit separately from the capture channel',async()=>{
+ const attribution={source:'google',medium:'cpc',campaign:'fixture'}
+ await bookLumaLeasingTour({...params,attribution})
+ expect(d.rpc).toHaveBeenCalledWith('reserve_luma_tour',expect.objectContaining({p_booking:expect.objectContaining({source:'lumaleasing',attribution})}))
+})

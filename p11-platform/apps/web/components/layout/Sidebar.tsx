@@ -2,24 +2,23 @@
 
 import Link from "next/link";
 import { P11Logo } from "@/components/ui/P11Logo";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { Menu, ArrowUpRight, type LucideIcon } from "lucide-react";
-import { navigationGroups, settingsNavigation } from "./navigation";
+import { currentSection, navigationGroups, settingsNavigation } from "./navigation";
 
 function NavLink({
   href,
   label,
   icon: Icon,
   description,
+  active,
 }: {
+  active: boolean;
   href: string;
   label: string;
   icon: LucideIcon;
   description: string;
 }) {
-  const path = usePathname(),
-    active =
-      path === href || (href !== "/dashboard" && path.startsWith(href + "/"));
   return (
     <Link
       href={href}
@@ -37,6 +36,8 @@ function NavLink({
   );
 }
 function SidebarContent() {
+  const section = currentSection(usePathname(), useSearchParams().get("section"));
+  const activeHref = section.label === "Workspace" ? null : section.href;
   return (
     <div className="console-sidebar-content">
       <Link
@@ -60,14 +61,14 @@ function SidebarContent() {
             <h2>{group.label}</h2>
             <nav aria-label={group.label}>
               {group.items.map((item) => (
-                <NavLink key={item.href} {...item} />
+                <NavLink key={item.href} {...item} active={activeHref === item.href} />
               ))}
             </nav>
           </section>
         ))}
       </div>
       <div className="console-sidebar-footer">
-        <NavLink {...settingsNavigation} />
+        <NavLink {...settingsNavigation} active={activeHref === settingsNavigation.href} />
         <p>
           Real estate marketing. Amplified.
           <ArrowUpRight size={12} aria-hidden="true" />

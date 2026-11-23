@@ -1,3 +1,4 @@
+import { propertyIdSchema } from '@/utils/property-setup/contracts'
 import {NextRequest,NextResponse} from 'next/server'
 import {z} from 'zod'
 import {createClient} from '@/utils/supabase/server'
@@ -8,7 +9,7 @@ import {assetDecisionSchema,uploadRecoverySchema} from '@/utils/forgestudio/asse
 import {assetLibraryRpc,boundedAssetForm,uploadLibraryAsset,recoverLibraryUpload} from '@/utils/forgestudio/asset-library-store'
 export const maxDuration=120
 async function assetActor(){const client=await createClient(),{data:{user},error}=await client.auth.getUser();if(error||!user)throw new ContentStoreError('Unauthorized',401);return user.id}
-async function assetAccess(actorId:string,propertyId:string){if(!z.string().uuid().safeParse(propertyId).success)throw new ContentStoreError('A valid property is required.',400);if(!(await validatePropertyAccess(actorId,propertyId)).authorized)throw new ContentStoreError('Forbidden',403)}
+async function assetAccess(actorId:string,propertyId:string){if(!propertyIdSchema.safeParse(propertyId).success)throw new ContentStoreError('A valid property is required.',400);if(!(await validatePropertyAccess(actorId,propertyId)).authorized)throw new ContentStoreError('Forbidden',403)}
 const assetFailure=(error:unknown)=>NextResponse.json({error:error instanceof ContentStoreError?error.message:error instanceof z.ZodError?'Review the asset fields and saved version before continuing.':'The asset library could not be loaded. Reload before continuing.'},{status:error instanceof ContentStoreError?error.statusCode:error instanceof z.ZodError?400:503})
 const cursorSchema=z.object({createdAt:z.iso.datetime({offset:true}).nullable(),id:z.string().uuid()})
 export async function GET(request:NextRequest){try{

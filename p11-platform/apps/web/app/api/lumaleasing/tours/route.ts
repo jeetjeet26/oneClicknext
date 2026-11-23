@@ -425,6 +425,7 @@ async function handlePost(req: NextRequest) {
         : null,
     ].filter(Boolean).join('. ');
     const leadResult = await upsertLeadByContact({
+      smsMarketingOptIn: validation.data.smsMarketingOptIn,
       client: supabase,
       propertyId,
       email: leadInfo.email,
@@ -435,6 +436,7 @@ async function handlePost(req: NextRequest) {
         email: leadInfo.email,
         phone: leadInfo.phone || '',
         source: 'LumaLeasing Tour Booking',
+        ...(validation.data.attribution && { attribution: validation.data.attribution }),
         status: 'tour_booked',
         notes: effectiveSpecialRequests || null,
       },
@@ -469,6 +471,7 @@ async function handlePost(req: NextRequest) {
     const result = await bookLumaLeasingTour({supabase,propertyId,propertyName,propertyAddress,
       leadId,leadInfo,bookingDate,bookingTime,durationMinutes:configuredTourDuration,
       specialRequests:effectiveSpecialRequests,source:'lumaleasing',conversationId:validatedConversationId,
+      attribution:validation.data.attribution,
       slot,skipAvailabilityCheck:true})
     if (!result.ok) return NextResponse.json({error:result.message},{status:409,headers:responseHeaders})
     return NextResponse.json({success:true,duplicate:result.duplicate,

@@ -159,8 +159,8 @@ function PropertyDashboardPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Property Overview</h1>
-          <p className="text-slate-500 mt-1">
+          <h1 className="text-2xl font-bold text-foreground">Community knowledge</h1>
+          <p className="text-muted-foreground mt-1">
             {currentProperty.name} · Property information, sources and approved knowledge
           </p>
         </div>
@@ -168,7 +168,7 @@ function PropertyDashboardPage() {
           <button
             onClick={fetchData}
             disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium text-slate-700 disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-2 bg-card border border-border rounded-lg hover:bg-muted transition-colors text-sm font-medium text-card-foreground disabled:opacity-50"
           >
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             Refresh
@@ -186,7 +186,7 @@ function PropertyDashboardPage() {
             className={`flex items-center gap-2 px-2 sm:px-4 py-2.5 rounded-lg whitespace-nowrap text-sm font-medium transition-colors flex-1 justify-center ${
               activeTab === tab.id
                 ? 'is-active'
-                : 'text-slate-600 hover:bg-slate-100'
+                : 'text-muted-foreground hover:bg-secondary'
             }`}
           >
             <tab.icon size={18} aria-hidden="true" className="hidden sm:block shrink-0" />
@@ -221,9 +221,9 @@ function PropertyDashboardPage() {
           {activeTab === 'overview' && (
             <div className="space-y-6">
               <div className="workspace-steps">
-                {[['facts', 'Community facts', 'Review the information used in content and conversations.'], ['floorplans', 'Floor plans', 'Upload floorplan images and manage pricing and availability.'], ['knowledge', 'Sources to review', 'Check websites, documents and written knowledge.'], ['files', 'Files and assets', 'Manage original files, images and approved assets.']].map(([id, title, description]) => <button type="button" key={id} onClick={() => setActiveTab(id as Tab)} className="console-panel p-5 text-left hover:border-orange-300"><h2 className="text-lg font-semibold">{title}</h2><p className="mt-2 text-sm text-slate-600">{description}</p><span className="mt-4 block text-sm font-medium text-[#a53212]">Open →</span></button>)}
+                {[['facts', 'Community facts', 'Review the information used in content and conversations.'], ['floorplans', 'Floor plans', 'Upload floorplan images and manage pricing and availability.'], ['knowledge', 'Sources to review', 'Check websites, documents and written knowledge.'], ['files', 'Files and assets', 'Manage original files, images and approved assets.']].map(([id, title, description]) => <button type="button" key={id} onClick={() => setActiveTab(id as Tab)} className="console-panel p-5 text-left hover:border-orange-300"><h2 className="text-lg font-semibold">{title}</h2><p className="mt-2 text-sm text-muted-foreground">{description}</p><span className="mt-4 block text-sm font-medium text-[#a53212]">Open →</span></button>)}
               </div>
-              <PropertyControls key={currentProperty.id} propertyId={currentProperty.id} />
+              <PropertyControls key={currentProperty.id} propertyId={currentProperty.id} propertyName={currentProperty.name} />
               {/* Property Profile Card */}
               <PropertyProfileCard
                 profile={profile}
@@ -265,7 +265,7 @@ function PropertyDashboardPage() {
           {activeTab === 'files' && <CommunityBrainWorkspace key={currentProperty.id} propertyId={currentProperty.id} propertyName={currentProperty.name} />}
           {activeTab === 'floorplans' && (
             <div className="space-y-6">
-              <div><h2 className="text-xl font-semibold">Floor plans</h2><p className="mt-1 text-sm text-slate-600">Upload your floorplan images, enter the details, then review and save. Manage imported plans below.</p></div>
+              <div><h2 className="text-xl font-semibold">Floor plans</h2><p className="mt-1 text-sm text-muted-foreground">Upload your floorplan images, enter the details, then review and save. Manage imported plans below.</p></div>
               <ManualFloorPlansConsole key={currentProperty.id} onSaved={() => setFloorPlanRevision(value => value + 1)} />
               <PropertyUnitsCard key={`${currentProperty.id}:${floorPlanRevision}`} propertyId={currentProperty.id} units={propertyUnits} allowCreate={false} />
             </div>
@@ -287,7 +287,7 @@ function PropertyDashboardPage() {
                 onRefresh={() => fetchData()}
               />
 
-              <details open={query.has('assistantFactVersion')} className="rounded-xl border border-slate-200 bg-white p-5"><summary className="cursor-pointer font-medium">Chatbot publication and retained facts history</summary><p className="my-3 text-sm text-slate-600">Review the chatbot’s published snapshot and its source versions. Maintain current property information in Approved facts and property setup.</p><ChatbotContextStatusCard propertyId={currentProperty?.id || ''} /></details>
+              <details open={query.has('assistantFactVersion')} className="rounded-xl border border-border bg-card p-5"><summary className="cursor-pointer font-medium">Chatbot publication and retained facts history</summary><p className="my-3 text-sm text-muted-foreground">Review the chatbot’s published snapshot and its source versions. Maintain current property information in Approved facts and property setup.</p><ChatbotContextStatusCard propertyId={currentProperty?.id || ''} /></details>
 
 
 
@@ -297,7 +297,7 @@ function PropertyDashboardPage() {
           {/* Onboarding Checklist Tab */}
           {activeTab === 'checklist' && (
             <div className="space-y-6">
-              <PropertyControls key={currentProperty.id} propertyId={currentProperty.id} />
+              <PropertyControls key={currentProperty.id} propertyId={currentProperty.id} propertyName={currentProperty.name} />
               <OnboardingTruthEditor propertyId={currentProperty?.id || ''} />
               <SiteForgeReadinessCard propertyId={currentProperty?.id || ''} />
               <OnboardingChecklist

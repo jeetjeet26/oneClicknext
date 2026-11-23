@@ -1046,11 +1046,16 @@ describe('LumaLeasing chat route', () => {
     })
   })
 
-  it('returns a property-only reply for off-topic questions without calling the LLM', async () => {
+  it.each([
+    ['teach me math','I can only help with questions about Acacia'],
+    ['Is this a good area for families?', 'specific features'],
+    ['Would my family fit in here?', 'specific features'],
+    ['What kind of people live here?', 'specific features'],
+  ])('handles %s without calling the LLM', async (question, answer) => {
     validateBodyMock.mockReturnValue({
       success: true,
       data: {
-        messages: [{ role: 'user', content: 'teach me math' }],
+        messages: [{ role: 'user', content: question }],
         sessionId: null,
         leadInfo: null,
       },
@@ -1091,14 +1096,14 @@ describe('LumaLeasing chat route', () => {
         'x-api-key': 'test-key',
       },
       body: JSON.stringify({
-        messages: [{ role: 'user', content: 'teach me math' }],
+        messages: [{ role: 'user', content: question }],
       }),
     }) as NextRequest
 
     const response = await POST(request)
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toMatchObject({
-      content: expect.stringContaining('I can only help with questions about Acacia'),
+      content: expect.stringContaining(answer),
       wantsTour: false,
     })
     expect(openAiEmbeddingsCreateMock).not.toHaveBeenCalled()

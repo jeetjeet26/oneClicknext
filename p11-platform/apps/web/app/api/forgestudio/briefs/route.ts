@@ -1,3 +1,4 @@
+import { propertyIdSchema } from '@/utils/property-setup/contracts'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createClient as createServerClient } from '@/utils/supabase/server'
@@ -11,7 +12,7 @@ import {
 
 const createBriefSchema = z.object({
   requestId: z.string().uuid(),
-  propertyId: z.string().uuid(),
+  propertyId: propertyIdSchema,
   title: z.string().min(1).max(300),
   objective: z.string().min(1).max(2000),
   topic: z.string().max(2000).nullish(),

@@ -59,7 +59,8 @@ export async function processWorkflowDeliveries():Promise<ProcessResult> {
    if(d.state==='skipped'){result.skipped++;continue}
    if(d.state==='review'){result.review++;result.errors.push(`Follow-up ${id} needs review`);continue}
    if(d.state!=='running'||!d.lease_token)throw new Error('Unexpected follow-up claim')
-   const content=workflowContent(d),configured=isMessagingConfigured()[d.channel]
+   const content=workflowContent(d)
+   const configured=isMessagingConfigured()[d.channel] && (d.channel!=='sms' || !!process.env.TELNYX_PUBLIC_KEY)
    const sender=d.sender || (d.channel==='email'?process.env.RESEND_FROM_EMAIL:process.env.TELNYX_PHONE_NUMBER) || ''
    const started=await db.rpc('start_workflow_delivery',{p_id:d.id,p_token:d.lease_token,p_body:content.body,p_subject:content.subject,p_sender:sender,p_issue:paused()?'delivery_paused':!configured?'configuration_missing':content.issue})
    if(started.error)throw new Error('Follow-up attempt acknowledgement was lost; delivery needs review')

@@ -163,3 +163,43 @@ describe('Acacia LumaLeasing widget regression contract', () => {
     expect(serialized).not.toMatch(/eyJ[A-Za-z0-9_-]{20,}\./)
   })
 })
+
+it('retains first tagged entry across widget pages and clears tags when consent is denied', () => {
+  const document = widgetDocument()
+  const sessionStorage = storage()
+  const location = {href:'https://housing.example.com/?utm_source=google&utm_medium=cpc&utm_campaign=spring&utm_content=ad&utm_term=apartments'}
+  let consent = 'granted'
+  const window = {location, SiteForgeConsent:{state:()=>consent}, addEventListener:vi.fn()}
+  const start = widgetSource.indexOf('  function campaignAttribution()')
+  const end = widgetSource.indexOf("  document.addEventListener('siteforge:consent-changed'", start)
+  const get = runInNewContext(widgetSource.slice(start,end)+'; campaignAttribution', {config:{apiKey:'fixture'},window,document,sessionStorage,URL})
+  expect(get()).toEqual({source:'google',medium:'cpc',campaign:'spring',content:'ad',term:'apartments'})
+  location.href = 'https://housing.example.com/tours?utm_source=second'
+  expect(get().source).toBe('google')
+  consent='denied'
+  expect(get()).toBeUndefined()
+  consent='granted'
+  location.href='https://housing.example.com/tours'
+  expect(get()).toBeUndefined()
+})
+
+it('renders the unsaved widget appearance without initializing a visitor or contacting the API', () => {
+  const document = widgetDocument()
+  const draft = { widgetName: 'Juniper concierge', welcomeMessage: 'Welcome to Juniper.',
+    primaryColor: '#123456', secondaryColor: '#abcdef', logoUrl: 'https://example.test/logo.png' }
+  Object.assign(document.currentScript, { dataset: { appearancePreview: encodeURIComponent(JSON.stringify(draft)) } })
+  document.createElement = () => {
+    const element = { innerHTML: '', textContent: '', appendChild: vi.fn(), addEventListener: vi.fn(), id: '', className: '', value: '', remove: vi.fn(), getBoundingClientRect: vi.fn() }
+    Object.defineProperty(element, 'textContent', { set(value: string) { element.innerHTML = value } })
+    return element
+  }
+  const append = vi.spyOn(document.body, 'appendChild')
+  const fetch = vi.fn()
+  const window = { location: { href: 'about:srcdoc' } }
+  // An opaque sandbox has no localStorage or sessionStorage.
+  runInNewContext(widgetSource, { window, document, fetch, URL })
+  expect(fetch).not.toHaveBeenCalled()
+  const frame = append.mock.calls[0][0]
+  expect(frame.inert).toBe(true)
+  for (const value of Object.values(draft)) expect(frame.innerHTML).toContain(value)
+})

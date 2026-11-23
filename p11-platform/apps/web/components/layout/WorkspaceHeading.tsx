@@ -1,8 +1,8 @@
 "use client";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { currentSection } from "./navigation";
 export function WorkspaceHeading() {
-  const section = currentSection(usePathname());
+  const section = currentSection(usePathname(), useSearchParams().get("section"));
   return (
     <div className="console-location">
       <span>Workspace</span>

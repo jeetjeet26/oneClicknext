@@ -2,7 +2,7 @@ import { CRM_PLATFORMS, publicIntegration } from '@/utils/crm/workspace'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
-import { validatePropertyAccess } from '@/utils/services/auth-guard'
+import { validatePropertyAccess, validatePropertyManagerAccess } from '@/utils/services/auth-guard'
 import type { Database } from '@/types/supabase'
 
 const PLATFORM_DISPLAY_NAMES: Record<string, string> = {
@@ -259,7 +259,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'propertyId and integration.platform are required' }, { status: 400 })
     }
 
-    const access = await validatePropertyAccess(user.id, propertyId)
+    const access = await validatePropertyManagerAccess(user.id, propertyId)
     if (!access.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
@@ -335,7 +335,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Integration not found' }, { status: 404 })
     }
 
-    const access = await validatePropertyAccess(user.id, existingIntegration.property_id)
+    const access = await validatePropertyManagerAccess(user.id, existingIntegration.property_id)
     if (!access.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }

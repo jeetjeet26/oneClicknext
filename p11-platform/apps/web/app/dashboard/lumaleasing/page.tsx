@@ -16,10 +16,8 @@ CheckCircle,
 Clock,
 Eye,
 Link,
-Mail,
 MessageSquare,
 Settings,
-Sparkles,
 TrendingUp,
 UserCheck,
 Users,
@@ -60,7 +58,7 @@ export default function LumaLeasingPage() {
       setProperty(target);url.searchParams.delete('propertyId');window.history.replaceState({},'',url.pathname+url.search)
     }
   }, [loading,hasLoadedProperties,properties,setProperty])
-  if(loading) return <p role="status" className="p-6 text-sm text-slate-500">Loading property records…</p>
+  if(loading) return <p role="status" className="p-6 text-sm text-muted-foreground">Loading property records…</p>
   if(!hasLoadedProperties) return <p role="alert" className="p-6 text-sm text-amber-700">Your property records are unavailable. Reload the page to try again.</p>
   return <LumaLeasingWorkspace key={currentProperty.id} />
 }
@@ -68,6 +66,7 @@ export default function LumaLeasingPage() {
 function LumaLeasingWorkspace() {
   const { currentProperty } = usePropertyContext();
   const [activeTab, setActiveTab] = useState<'overview' | 'conversations' | 'integrations' | 'config'>('overview');
+  const [previewRequested,setPreviewRequested] = useState(false);
   const [connectionError,setConnectionError] = useState<string|null>(null);
   const [selectedConversation,setSelectedConversation]=useState<string|null>(null);
   useEffect(() => {const params=new URLSearchParams(window.location.search);if(params.has('success') || params.has('error')) setActiveTab('integrations');else if(params.get('tab')==='conversations')setActiveTab('conversations');const requested=params.get('conversation');if(requested&&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(requested)){setSelectedConversation(requested);setActiveTab('conversations')};setConnectionError(params.get('error'))}, []);
@@ -97,16 +96,17 @@ function LumaLeasingWorkspace() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-4">
-          <div className="h-12 w-12 rounded-xl bg-[#eaf0f2] flex items-center justify-center text-[#476d79]">
-            <Sparkles className="w-6 h-6" />
+          <div className="console-icon-tile">
+            <MessageSquare aria-hidden="true" className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">LumaLeasing</h1>
-            <p className="text-slate-500">Conversations, tours and leasing support for {currentProperty.name}</p>
+            <h1 className="text-2xl font-bold text-foreground">LumaLeasing</h1>
+            <p className="text-muted-foreground">Conversations, tours and leasing support for {currentProperty.name}</p>
           </div>
         </div>
+        {activeTab !== 'config' && <button type="button" className="console-action" onClick={() => {setPreviewRequested(true);setActiveTab('config')}}><Eye size={16}/>Preview widget</button>}
       </div>
 
       {connectionError && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -114,11 +114,8 @@ function LumaLeasingWorkspace() {
         <p>{integrationFailureMessage(connectionError)}</p>
         <button type="button" className="mt-2 underline" onClick={()=>{setConnectionError(null);const url=new URL(window.location.href);url.searchParams.delete('error');window.history.replaceState({},'',url.pathname+url.search)}}>Dismiss connection message</button>
       </div>}
-      <ReliabilityPanel key={currentProperty.id} propertyId={currentProperty.id} area="luma" />
-      <RequestEvidence key={`requests-${currentProperty.id}`} propertyId={currentProperty.id}/>
-
       {/* Tabs */}
-      <div className="border-b border-slate-200">
+      <div className="border-b border-border">
         <div className="flex flex-wrap gap-x-6 gap-y-2">
           {[
             { id: 'overview', label: 'Overview', icon: TrendingUp },
@@ -128,11 +125,12 @@ function LumaLeasingWorkspace() {
           ].map(({ id, label, icon: Icon }) => (
             <button
               key={id}
-              onClick={() => setActiveTab(id as typeof activeTab)}
+              aria-pressed={activeTab === id}
+              onClick={() => {setPreviewRequested(false);setActiveTab(id as typeof activeTab)}}
               className={`flex items-center gap-2 pb-4 border-b-2 transition-colors ${
                 activeTab === id
-                  ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-slate-500 hover:text-slate-700'
+                  ? 'border-indigo-600 text-primary'
+                  : 'border-transparent text-muted-foreground hover:text-card-foreground'
               }`}
             >
               <Icon className="w-4 h-4" />
@@ -142,51 +140,51 @@ function LumaLeasingWorkspace() {
         </div>
       </div>
 
-      {loading && <p role="status" className="text-sm text-slate-500">Loading conversation records…</p>}
-      {loadError && <div role="alert" className="rounded-xl border border-amber-200 p-4 text-sm text-amber-800">
+      {activeTab === 'overview' && <>
+        <ReliabilityPanel key={currentProperty.id} propertyId={currentProperty.id} area="luma" />
+      <RequestEvidence key={`requests-${currentProperty.id}`} propertyId={currentProperty.id}/>
+      </>}
+      {activeTab === 'overview' && loading && <p role="status" className="text-sm text-muted-foreground">Loading conversation records…</p>}
+      {activeTab === 'overview' && loadError && <div role="alert" className="rounded-xl border border-amber-200 p-4 text-sm text-amber-800">
         Conversation records could not be loaded. <button type="button" className="underline" onClick={()=>setRevision(value=>value+1)}>Try again</button>
       </div>}
       {/* Content */}
       {activeTab === 'overview' && !loading && !loadError && stats && (
         <div className="space-y-6">
-          <p className="text-sm text-slate-500">All retained widget sessions and conversation records · Updated {new Date(stats.asOf).toLocaleString()}. Bookings include cancellations; counts do not prove tours were attended.</p>
+          <p className="text-sm text-muted-foreground">All retained widget sessions and conversation records · Updated {new Date(stats.asOf).toLocaleString()}. Bookings include cancellations; counts do not prove tours were attended.</p>
           {/* Stats Grid */}
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
             <StatCard
               label="Total Sessions"
               value={stats.totalSessions}
               icon={Eye}
-              color="indigo"
             />
             <StatCard
               label="Unique Leads"
               value={stats.uniqueLeads}
               icon={Users}
-              color="emerald"
             />
             <StatCard
               label="Bookings Recorded"
               value={stats.toursBooked}
               icon={Calendar}
-              color="violet"
             />
             <StatCard
               label="Sessions Linked to Leads"
               value={stats.conversionRate===null?'No sessions':`${stats.conversionRate}%`}
               icon={TrendingUp}
-              color="amber"
             />
           </div>
 
           {/* Recent Activity */}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             {/* Recent Conversations */}
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+            <div className="bg-card rounded-xl shadow-sm border border-border p-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-slate-900">Newest Widget Conversations</h3>
+                <h3 className="font-semibold text-foreground">Newest Widget Conversations</h3>
                 <button
                   onClick={() => {setSelectedConversation(null);setActiveTab('conversations')}}
-                  className="text-sm text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
+                  className="text-sm text-primary hover:text-accent-foreground flex items-center gap-1"
                 >
                   View all <ArrowUpRight className="w-3 h-3" />
                 </button>
@@ -195,25 +193,25 @@ function LumaLeasingWorkspace() {
               {conversations.length === 0 ? (
                 <div className="text-center py-8">
                   <MessageSquare className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-                  <p className="text-slate-500">No conversations yet</p>
+                  <p className="text-muted-foreground">No conversations yet</p>
                   <p className="text-sm text-slate-400">Conversations will appear here once visitors start chatting</p>
                 </div>
               ) : (
                 <div className="space-y-3">
                   {conversations.slice(0, 5).map((conv) => (
-                    <button key={conv.id} type="button" aria-label={`Open recent conversation: ${conv.lead_name||conv.lead_email||'Anonymous visitor'}`} onClick={()=>{setSelectedConversation(conv.id);setActiveTab('conversations')}} className="w-full text-left flex items-center gap-3 p-3 rounded-lg hover:bg-slate-50 transition-colors">
+                    <button key={conv.id} type="button" aria-label={`Open recent conversation: ${conv.lead_name||conv.lead_email||'Anonymous visitor'}`} onClick={()=>{setSelectedConversation(conv.id);setActiveTab('conversations')}} className="w-full text-left flex items-center gap-3 p-3 rounded-lg hover:bg-muted transition-colors">
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
                         conv.is_human_mode 
                           ? 'bg-amber-100 text-amber-600' 
-                          : 'bg-indigo-100 text-indigo-600'
+                          : 'bg-accent text-primary'
                       }`}>
                         {conv.is_human_mode ? <UserCheck className="w-5 h-5" /> : <Bot className="w-5 h-5" />}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium text-slate-900 truncate">
+                        <p className="font-medium text-foreground truncate">
                           {conv.lead_name || conv.lead_email || 'Anonymous Visitor'}
                         </p>
-                        <p className="text-sm text-slate-500 truncate">
+                        <p className="text-sm text-muted-foreground truncate">
                           {conv.last_message || 'No messages'}
                         </p>
                       </div>
@@ -221,7 +219,7 @@ function LumaLeasingWorkspace() {
                         <p className="text-xs text-slate-400">
                           {conv.created_at?new Date(conv.created_at).toLocaleDateString():'Time not recorded'}
                         </p>
-                        <p className="text-xs text-slate-500">{conv.message_count} messages</p>
+                        <p className="text-xs text-muted-foreground">{conv.message_count} messages</p>
                       </div>
                     </button>
                   ))}
@@ -230,45 +228,45 @@ function LumaLeasingWorkspace() {
             </div>
 
             {/* Quick Stats */}
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-              <h3 className="font-semibold text-slate-900 mb-4">Performance</h3>
+            <div className="bg-card rounded-xl shadow-sm border border-border p-6">
+              <h3 className="font-semibold text-foreground mb-4">Performance</h3>
               
               <div className="space-y-4">
-                <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
+                <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
                   <div className="flex items-center gap-3">
                     <Clock className="w-5 h-5 text-slate-400" />
                     <div>
-                      <p className="text-sm font-medium text-slate-900">Response Timing</p>
-                      <p className="text-xs text-slate-500">Separate assistant timing is not measured</p>
+                      <p className="text-sm font-medium text-foreground">Response Timing</p>
+                      <p className="text-xs text-muted-foreground">Separate assistant timing is not measured</p>
                     </div>
                   </div>
-                  <p className="text-lg font-semibold text-slate-900">
+                  <p className="text-lg font-semibold text-foreground">
                     Not measured
                   </p>
                 </div>
 
-                <div className="flex items-center justify-between p-4 bg-emerald-50 rounded-lg">
+                <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
                   <div className="flex items-center gap-3">
-                    <CheckCircle className="w-5 h-5 text-emerald-500" />
+                    <CheckCircle className="w-5 h-5 text-muted-foreground" />
                     <div>
-                      <p className="text-sm font-medium text-slate-900">Session Lead Link Rate</p>
-                      <p className="text-xs text-slate-500">Sessions linked to a lead; repeat sessions count</p>
+                      <p className="text-sm font-medium text-foreground">Session Lead Link Rate</p>
+                      <p className="text-xs text-muted-foreground">Sessions linked to a lead; repeat sessions count</p>
                     </div>
                   </div>
-                  <p className="text-lg font-semibold text-emerald-600">
+                  <p className={stats.conversionRate === null ? "text-right text-sm text-muted-foreground" : "text-right text-lg font-semibold text-foreground"}>
                     {stats.conversionRate===null?'No sessions':`${stats.conversionRate}%`}
                   </p>
                 </div>
 
-                <div className="flex items-center justify-between p-4 bg-violet-50 rounded-lg">
+                <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
                   <div className="flex items-center gap-3">
-                    <Calendar className="w-5 h-5 text-violet-500" />
+                    <Calendar className="w-5 h-5 text-muted-foreground" />
                     <div>
-                      <p className="text-sm font-medium text-slate-900">Tour Booking Rate</p>
-                      <p className="text-xs text-slate-500">Distinct linked leads with a non-cancelled Luma booking</p>
+                      <p className="text-sm font-medium text-foreground">Tour Booking Rate</p>
+                      <p className="text-xs text-muted-foreground">Distinct linked leads with a non-cancelled Luma booking</p>
                     </div>
                   </div>
-                  <p className="text-lg font-semibold text-violet-600">
+                  <p className={stats.tourBookingRate === null ? "text-right text-sm text-muted-foreground" : "text-right text-lg font-semibold text-foreground"}>
                     {stats.tourBookingRate===null?'No linked leads':`${stats.tourBookingRate}%`}
                   </p>
                 </div>
@@ -284,38 +282,25 @@ function LumaLeasingWorkspace() {
         <IntegrationsPanel propertyId={currentProperty.id} />
       )}
 
-      {activeTab === 'config' && <LumaLeasingConfig />}
+      {activeTab === 'config' && <LumaLeasingConfig initiallyPreview={previewRequested} />}
     </div>
   );
 }
 
-function StatCard({ 
-  label, 
-  value, 
-  icon: Icon, 
-  color 
-}: { 
-  label: string; 
-  value: number | string; 
-  icon: React.ElementType; 
-  color: 'indigo' | 'emerald' | 'violet' | 'amber';
+function StatCard({ label, value, icon: Icon }: {
+  label: string;
+  value: number | string;
+  icon: React.ElementType;
 }) {
-  const colors = {
-    indigo: 'bg-indigo-50 text-indigo-600',
-    emerald: 'bg-emerald-50 text-emerald-600',
-    violet: 'bg-violet-50 text-violet-600',
-    amber: 'bg-amber-50 text-amber-600',
-  };
-
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+    <div className="bg-card rounded-xl shadow-sm border border-border p-6">
       <div className="flex items-center justify-between mb-4">
-        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${colors[color]}`}>
+        <div className="console-icon-tile">
           <Icon className="w-5 h-5" />
         </div>
       </div>
-      <p className="text-2xl font-bold text-slate-900">{value}</p>
-      <p className="text-sm text-slate-500">{label}</p>
+      <p className={typeof value === 'string' && !value.endsWith('%') ? 'text-sm text-muted-foreground' : 'text-2xl font-bold text-foreground'}>{value}</p>
+      <p className="text-sm text-muted-foreground">{label}</p>
     </div>
   );
 }
@@ -368,9 +353,7 @@ function IntegrationsPanel({ propertyId }: { propertyId: string }) {
       description: 'Connect Google Calendar for tour availability and booking events.',
       provider: 'google' as const,
       capability: 'calendar' as const,
-      icon: Calendar,
       connectHref: `/api/lumaleasing/calendar/connect?propertyId=${propertyId}&provider=google`,
-      color: 'bg-indigo-600 hover:bg-indigo-700',
     },
     {
       key: 'microsoft-calendar',
@@ -378,9 +361,7 @@ function IntegrationsPanel({ propertyId }: { propertyId: string }) {
       description: 'Connect Microsoft Outlook Calendar for tour scheduling and optional Teams links.',
       provider: 'microsoft' as const,
       capability: 'calendar' as const,
-      icon: Calendar,
       connectHref: `/api/lumaleasing/calendar/connect?propertyId=${propertyId}&provider=microsoft`,
-      color: 'bg-slate-900 hover:bg-slate-800',
     },
     {
       key: 'google-email',
@@ -388,9 +369,7 @@ function IntegrationsPanel({ propertyId }: { propertyId: string }) {
       description: 'Connect Gmail for outbound email and inbound lead reply sync.',
       provider: 'google' as const,
       capability: 'email' as const,
-      icon: Mail,
       connectHref: `/api/lumaleasing/email/connect?propertyId=${propertyId}&provider=google`,
-      color: 'bg-emerald-600 hover:bg-emerald-700',
     },
     {
       key: 'microsoft-email',
@@ -398,24 +377,21 @@ function IntegrationsPanel({ propertyId }: { propertyId: string }) {
       description: 'Connect Microsoft Outlook Mail for outbound email and inbox reply sync.',
       provider: 'microsoft' as const,
       capability: 'email' as const,
-      icon: Mail,
       connectHref: `/api/lumaleasing/email/connect?propertyId=${propertyId}&provider=microsoft`,
-      color: 'bg-blue-600 hover:bg-blue-700',
     },
   ];
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-        <h3 className="text-lg font-semibold text-slate-900">Calendar And Email Integrations</h3>
-        <p className="text-sm text-slate-500 mt-1">
+      <div className="bg-card rounded-xl shadow-sm border border-border p-6">
+        <h3 className="text-lg font-semibold text-foreground">Calendar And Email Integrations</h3>
+        <p className="text-sm text-muted-foreground mt-1">
           Connect directly if you have access, or copy an external auth link for a client to authorize one property without a P11 login.
         </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {cards.map((card) => {
-          const Icon = card.icon;
           const status = card.capability === 'calendar' ? calendarStatus : emailStatus;
           const matchesConnectedProvider =
             status?.provider === card.provider && status.state !== 'disconnected';
@@ -426,15 +402,12 @@ function IntegrationsPanel({ propertyId }: { propertyId: string }) {
           const accountEmail = status?.account_email || status?.email;
 
           return (
-            <div key={card.key} className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+            <div key={card.key} className="bg-card rounded-xl shadow-sm border border-border p-6">
               <div className="flex items-start gap-4">
-                <div className="w-11 h-11 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center">
-                  <Icon className="w-5 h-5" />
-                </div>
                 <div className="flex-1">
-                  <h4 className="font-semibold text-slate-900">{card.title}</h4>
-                  <p className="text-sm text-slate-500 mt-1">{card.description}</p>
-                  {statusLoading && <p role="status" className="mt-3 text-sm text-slate-500">Loading connection status…</p>}
+                  <h4 className="font-semibold text-foreground">{card.title}</h4>
+                  <p className="text-sm text-muted-foreground mt-1">{card.description}</p>
+                  {statusLoading && <p role="status" className="mt-3 text-sm text-muted-foreground">Loading connection status…</p>}
                   {statusError && <div role="alert" className="mt-3 text-sm text-red-700"><p>{statusError}</p><button type="button" onClick={() => setRevision(value => value + 1)} className="mt-2 underline">Retry {card.title} status</button></div>}
                   {matchesConnectedProvider && (
                     <div className={`mt-3 rounded-lg border px-3 py-2 text-sm ${
@@ -461,12 +434,12 @@ function IntegrationsPanel({ propertyId }: { propertyId: string }) {
                 </div>
               </div>
               {needsSetup && <div className="mt-4"><PropertyTimezoneSetup key={propertyId} propertyId={propertyId} onSaved={() => setRevision(value => value + 1)}/></div>}
-              {card.capability === 'calendar' && matchesConnectedProvider && calendarStatus?.timezone && <p className="mt-3 text-sm text-slate-600">Tour timezone: {calendarStatus.timezone}</p>}
+              {card.capability === 'calendar' && matchesConnectedProvider && calendarStatus?.timezone && <p className="mt-3 text-sm text-muted-foreground">Tour timezone: {calendarStatus.timezone}</p>}
               <div className="flex flex-wrap gap-2 mt-5">
                 <button
                   onClick={() => window.location.href = card.connectHref}
                   disabled={statusLoading || !!statusError}
-                  className={`px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors ${card.color}`}
+                  className="console-action-primary"
                 >
                   {needsReconnect ? 'Reconnect' : matchesConnectedProvider ? 'Reconnect' : 'Connect'}
                 </button>

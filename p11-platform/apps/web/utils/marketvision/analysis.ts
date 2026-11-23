@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { publicMarketUrl } from './decision-contracts'
 
 const id = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
 const number = z.number().finite().nonnegative().nullable()
@@ -25,7 +26,7 @@ const mean = (v: number[]) => v.length ? round(v.reduce((a, b) => a + b, 0) / v.
 const min = (v: number[]) => v.length ? v.reduce((a, b) => Math.min(a, b)) : null
 const max = (v: number[]) => v.length ? v.reduce((a, b) => Math.max(a, b)) : null
 const latest = (v: Array<string | null>) => v.filter((d): d is string => d !== null).sort((a,b) => Date.parse(b)-Date.parse(a))[0] ?? null
-export const ANALYSIS_METHOD = 'Mean of known advertised starting rents per saved floor plan; each plan counts once. Missing values stay unknown. No weighting by available apartments, concessions, lease terms or amenities.'
+export const ANALYSIS_METHOD = 'Only dated public-page captures contribute rents. Mean advertised starting rent per saved floor plan; each plan counts once. Missing values stay unknown. No weighting by available apartments, concessions, lease terms or amenities.'
 
 // A source capture is one observation. Several prices for one plan in that
 // capture are an identity conflict, not a sequence of market movements.
@@ -52,7 +53,23 @@ export function conflictedPriceUnits(snapshot: MarketAnalysisSnapshot, currentOn
   return result
 }
 
-export function analyzeMarket(snapshot: MarketAnalysisSnapshot, filter: {bedrooms?: number; unitType?: string} = {}) {
+export function analyzeMarket(source: MarketAnalysisSnapshot, filter: {bedrooms?: number; unitType?: string} = {}) {
+  // A typed or pasted URL alone is not a public fetch receipt. Preserve plans
+  // and unknown observations for coverage, including gaps in historical trends.
+  const publicCaptures = new Map(source.captures.filter(c =>
+    c.fetched && c.source_type !== 'manual' && c.status === 'captured' && !!c.content_hash &&
+    !!c.source_url && publicMarketUrl(c.source_url) &&
+    Date.parse(c.captured_at) <= Date.parse(source.snapshotAt)
+  ).map(c => [c.id, c.competitor_id]))
+  const owners = new Map(source.units.map(u => [u.id, u.competitor_id]))
+  const snapshot = {
+    ...source,
+    units: source.units.map(u => u.capture_id && publicCaptures.get(u.capture_id) === u.competitor_id
+      ? u : {...u, rent_min: null, rent_max: null}),
+    history: source.history.map(h => h.capture_id && publicCaptures.has(h.capture_id) &&
+      publicCaptures.get(h.capture_id) === owners.get(h.competitor_unit_id)
+      ? h : {...h, rent_min: null, rent_max: null}),
+  }
   const conflicts = conflictedPriceUnits(snapshot, true)
   const units = snapshot.units.filter(u => (filter.bedrooms === undefined || u.bedrooms === filter.bedrooms) && (filter.unitType === undefined || u.unit_type === filter.unitType)).map(u => conflicts.has(u.id) ? {...u, rent_min:null, rent_max:null} : u)
   const compById = new Map(snapshot.competitors.map(c => [c.id, c]))
@@ -86,7 +103,7 @@ export function analyzeMarket(snapshot: MarketAnalysisSnapshot, filter: {bedroom
   const position = bedroomCounts.map(bedrooms => {
     const rows = units.filter(u => u.bedrooms === bedrooms), s = stats(rows)
     return {bedrooms,unitType:bedrooms === 0 ? 'Studio' : `${bedrooms}BR`,competitors:s.competitorsSampled,avgRent:s.avg,minRent:s.min,maxRent:s.max,pricedPlans:s.pricedPlans,totalPlans:s.totalPlans,
-      rentRange:rows.filter(u => known(u.rent_min)).map(u => ({competitor:compById.get(u.competitor_id)!.name,rent:u.rent_min!,unitId:u.id})), citations:rows.map(u => citation(u))}
+      rentRange:rows.filter(u => known(u.rent_min)).map(u => ({competitor:compById.get(u.competitor_id)!.name,rent:u.rent_min!,unitId:u.id})), citations:rows.filter(u => known(u.rent_min) || known(u.rent_max)).map(u => citation(u))}
   })
   const start = Date.parse(snapshot.windowStart), now = Date.parse(snapshot.snapshotAt)
   const ambiguous = conflictedPriceUnits(snapshot)

@@ -35,7 +35,8 @@
   let config = null;
   let isOpen = false;
   let messages = [];
-  let sessionId = getStoredSessionId();
+  const previewDraft = loaderScript?.dataset?.appearancePreview;
+  let sessionId = previewDraft ? null : getStoredSessionId();
   let conversationId = null;
   let leadCaptured = false;
   let leadPromptShown = false;
@@ -116,7 +117,7 @@
   }
   let leadInfo = { firstName: '', lastName: '', email: '', phone: '' };
   let isTyping = false;
-  let visitorId = getVisitorId();
+  let visitorId = previewDraft ? null : getVisitorId();
   let isHumanMode = false;
   let historyPollTimer = null;
   let serverHistorySignature = '';
@@ -198,6 +199,34 @@
     }
   }
 
+  // Retain the first tagged visit for this property during this browser tab.
+  function campaignAttribution() {
+    const key = 'luma_campaign_' + config.apiKey;
+    try {
+      const consent = window.SiteForgeConsent?.state?.();
+      if ((window.SiteForgeConsent || window.oneClickAnalytics?.consentMode === 'required') &&
+          consent !== 'granted' && consent !== 'not_required') {
+        try { sessionStorage.removeItem(key); } catch { /* Storage unavailable. */ }
+        return undefined;
+      }
+    } catch { return undefined; }
+    try {
+      const stored = sessionStorage.getItem(key);
+      if (stored) return JSON.parse(stored);
+    } catch { /* Storage is optional on embedded sites. */ }
+    const params = new URL(window.location.href).searchParams;
+    const tags = {};
+    for (const field of ['source', 'medium', 'campaign', 'term', 'content']) {
+      const value = params.get('utm_' + field)?.trim().slice(0, 200);
+      if (value) tags[field] = value;
+    }
+    if (!Object.keys(tags).length) return undefined;
+    try { sessionStorage.setItem(key, JSON.stringify(tags)); } catch { /* Keep current page tags. */ }
+    return tags;
+  }
+
+  document.addEventListener('siteforge:consent-changed', function() { if (config?.apiKey) campaignAttribution(); });
+
   // Initialize widget
   async function initWidget(apiKey, options) {
     if (!apiKey) {
@@ -219,6 +248,7 @@
       const data = await response.json();
       config = data.config;
       config.apiKey = apiKey;
+      campaignAttribution();
       config.position = options.position || 'bottom-right';
 
       // Add welcome message
@@ -432,7 +462,7 @@
         fill: white;
       }
       .ll-window {
-        width: 380px;
+        width: min(380px, calc(100vw - 32px));
         height: 600px;
         max-height: calc(100vh - 100px);
         background: white;
@@ -1333,6 +1363,9 @@
               <input type="tel" id="ll-phone" value="${leadInfo.phone || ''}" />
             </div>
             <div class="ll-form-group">
+              <label><input type="checkbox" id="ll-sms-marketing" /> I agree to receive automated marketing texts from this property at the number above. Consent is optional. Message frequency varies. Message and data rates may apply. Reply STOP to opt out.</label>
+            </div>
+            <div class="ll-form-group">
               <label>Special Requests</label>
               <textarea id="ll-special-requests" rows="3" placeholder="Any specific things you'd like to see?"></textarea>
             </div>
@@ -1503,8 +1536,9 @@
   }
 
   // Book a tour
-  async function bookTour(date, time, contactInfo) {
+  async function bookTour(date, time, contactInfo, smsMarketingOptIn) {
     try {
+      const attribution = campaignAttribution();
       const response = await fetch(getApiBase() + '/api/lumaleasing/tours', {
         method: 'POST',
         headers: {
@@ -1513,7 +1547,9 @@
           'X-Visitor-ID': visitorId
         },
         body: JSON.stringify({
-          requestId: await requestIdentity('tours', {date:date,time:time,contactInfo:contactInfo,sessionId:sessionId,conversationId:conversationId}),
+          requestId: await requestIdentity('tours', {date,time,contactInfo,sessionId,conversationId,attribution,smsMarketingOptIn}),
+          attribution,
+          smsMarketingOptIn,
           slotId: null, // Using direct date/time, not slot ID
           leadInfo: contactInfo,
           specialRequests: contactInfo.specialRequests,
@@ -1869,6 +1905,7 @@
 
   // POST one chat request. Extracted so sendMessage can retry cleanly.
   async function postChat(body) {
+    body.attribution = campaignAttribution();
     body.requestId = await requestIdentity('chat', body);
     const response = await fetch(getApiBase() + '/api/lumaleasing/chat', {
       method: 'POST',
@@ -1999,6 +2036,11 @@
     const lastName = document.getElementById('ll-last-name')?.value;
     const email = document.getElementById('ll-email')?.value;
     const phone = document.getElementById('ll-phone')?.value;
+    const marketingOptIn = document.getElementById('ll-sms-marketing')?.checked || undefined;
+    if (marketingOptIn && !phone?.trim()) {
+      alert('Enter a mobile number or clear the optional text consent.');
+      return;
+    }
     const specialRequests = document.getElementById('ll-special-requests')?.value;
 
     if (!firstName || !lastName || !email) {
@@ -2020,7 +2062,7 @@
         email: email,
         phone: phone,
         specialRequests: specialRequests
-      });
+      }, marketingOptIn);
 
       // Success handled in bookTour function (returns to chat with message)
     } catch (error) {
@@ -2034,6 +2076,31 @@
       }
     }
   };
+
+  // The sandboxed console preview shares the production renderer but has no session or API key.
+  if (previewDraft) {
+    const draft = JSON.parse(decodeURIComponent(previewDraft));
+    const color = value => /^#[a-f0-9]{6}$/i.test(value) ? value : '#333333';
+    const imageUrl = value => {
+      try {
+        const url = new URL(value);
+        return /^https?:$/.test(url.protocol) ? url.href.replace(/"/g, '%22') : null;
+      } catch { return null; }
+    };
+    config = {
+      widgetName: draft.widgetName || 'Leasing assistant',
+      primaryColor: color(draft.primaryColor), secondaryColor: color(draft.secondaryColor),
+      logoUrl: imageUrl(draft.logoUrl), agentAvatarUrl: imageUrl(draft.agentAvatarUrl)
+    };
+    messages = [{role: 'assistant', content: draft.welcomeMessage || '', timestamp: new Date()}];
+    injectStyles();
+    const preview = document.createElement('div');
+    preview.className = 'll-widget bottom-right';
+    preview.inert = true;
+    preview.innerHTML = renderWindow();
+    document.body.appendChild(preview);
+    return;
+  }
 
   // Replace queue with handler
   window.lumaleasing = function() {
