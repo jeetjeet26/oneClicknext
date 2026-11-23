@@ -189,6 +189,26 @@ class MCPMarketingSync:
         )
         return stored
 
+    def _google_ads_grant(self, property_id: str, customer_id: str):
+        from google_ads.agency_reporting import AgencyGrant
+        from shared.daily_reports import ReportValidationError
+
+        saved = self.supabase.rpc('read_google_ads_import_credentials', {
+            'p_property_id': property_id, 'p_account_id': customer_id,
+        }).execute().data
+        if saved is None:
+            return None
+        if not isinstance(saved, dict) or not isinstance(saved.get('app'), dict):
+            raise ReportValidationError('Google Ads agency authorization could not be verified')
+        token = saved.get('refreshToken')
+        app = saved['app']
+        if token is None and saved.get('authorizedAt') is None:
+            raise ReportValidationError('Authorize Google Ads in Agency advertising settings')
+        fields = (app.get('managerId'), app.get('clientId'), app.get('clientSecret'), token)
+        if not all(isinstance(value, str) and value for value in fields):
+            raise ReportValidationError('Google Ads agency authorization could not be verified')
+        return AgencyGrant(*fields)
+
     async def _sync_google_ads(self, property_id: str, customer_id: str, date_range: str) -> Dict[str, Any]:
         """Read and validate the complete account report before writing any rows."""
         from pipelines.marketing_report import report_records
@@ -197,7 +217,13 @@ class MCPMarketingSync:
             daily_report, clean_customer_id = _get_google_ads_tools()
             if not daily_report or not clean_customer_id:
                 return self._build_channel_result('google_ads', 'skipped', [], 'Google Ads tools not available')
-            report = await daily_report(customer_id=clean_customer_id(customer_id), date_range=date_range, **({'reference_time': self.reference_time} if self.reference_time is not None else {}))
+            grant = await asyncio.to_thread(self._google_ads_grant, property_id, customer_id)
+            options = {}
+            if self.reference_time is not None:
+                options['reference_time'] = self.reference_time
+            if grant is not None:
+                options['agency_grant'] = grant
+            report = await daily_report(customer_id=clean_customer_id(customer_id), date_range=date_range, **options)
             records = report_records(report, property_id, 'google_ads', customer_id)
             return {**self._build_channel_result('google_ads', 'succeeded', records),
                     'receipt': self._coverage_receipt(report, 'google_ads', len(records))}
