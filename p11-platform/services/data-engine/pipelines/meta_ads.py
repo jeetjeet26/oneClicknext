@@ -11,7 +11,7 @@ from utils.supabase_client import get_supabase
 # Real production logic for Meta Graph API
 class MetaAdsClient:
     def __init__(self, access_token: str, ad_account_id: str):
-        self.base_url = "https://graph.facebook.com/v19.0"
+        self.base_url = "https://graph.facebook.com/v26.0"
         self.access_token = access_token
         self.ad_account_id = ad_account_id.removeprefix("act_")
         

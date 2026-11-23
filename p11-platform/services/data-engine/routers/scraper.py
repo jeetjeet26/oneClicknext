@@ -7,7 +7,7 @@ re-validate property/competitor membership inside the service-role boundary.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 import logging
 
@@ -52,11 +52,16 @@ def verify_competitor_in_property(supabase, competitor_id: str, property_id: str
 # Request/Response Models
 # ============================================
 
+from scrapers.knowledge_discovery import DiscoveryKnowledge
+from starlette.concurrency import run_in_threadpool
+
+
 class DiscoverRequest(BaseModel):
     property_id: str
-    radius_miles: float = 3.0
-    max_competitors: int = 20
+    radius_miles: float = Field(default=3.0, ge=0.5, le=25)
+    max_competitors: int = Field(default=20, ge=1, le=50)
     auto_add: bool = True
+    community_context: Optional[DiscoveryKnowledge] = None
 
 
 class RefreshPricingRequest(BaseModel):
@@ -118,11 +123,12 @@ async def discover_competitors(request: DiscoverRequest):
         coordinator = ScrapingCoordinator()
 
         # Run discovery (can take time with Google Places API)
-        result = coordinator.discover_competitors_for_property(
+        result = await run_in_threadpool(coordinator.discover_competitors_for_property,
             property_id=request.property_id,
             radius_miles=request.radius_miles,
             max_competitors=request.max_competitors,
-            auto_add=request.auto_add
+            auto_add=request.auto_add,
+            community_context=request.community_context,
         )
 
         if not result.get('success'):

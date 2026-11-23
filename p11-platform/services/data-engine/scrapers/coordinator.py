@@ -90,128 +90,86 @@ class ScrapingCoordinator:
         self.supabase = get_supabase_client()
     
     def discover_competitors_for_property(
-        self,
-        property_id: str,
-        radius_miles: float = 3.0,
-        max_competitors: int = 20,
-        auto_add: bool = True
+        self, property_id: str, radius_miles: float = 3.0,
+        max_competitors: int = 20, auto_add: bool = True, community_context=None,
     ) -> Dict[str, Any]:
-        """
-        Discover competitors near a property and optionally add them
-        
-        Uses intelligent filtering based on property_type to only find
-        relevant competitors (e.g., only apartments for apartment properties).
-        
-        Args:
-            property_id: Supabase property ID
-            radius_miles: Search radius in miles
-            max_competitors: Maximum competitors to find
-            auto_add: Automatically add discovered competitors
-            
-        Returns:
-            Dict with discovered competitors and status
-        """
-        # Get property details (including property_type for intelligent filtering)
+        from scrapers.knowledge_discovery import subject_profile, search_terms, rank_candidates
+        from utils.geocoding import GeocodingService
+        from concurrent.futures import ThreadPoolExecutor
         property_result = self.supabase.table('properties').select(
             'id, name, address, year_built, unit_count, amenities, property_type'
         ).eq('id', property_id).single().execute()
-        
         if not property_result.data:
             return {'success': False, 'error': 'Property not found'}
-        
-        property_data = property_result.data
-        address_json = property_data.get('address') or {}
-        property_type = property_data.get('property_type')
-        
-        # Build address string
-        address_parts = [
-            address_json.get('street', ''),
-            address_json.get('city', ''),
-            address_json.get('state', ''),
-            address_json.get('zip', '')
-        ]
-        full_address = ', '.join(p for p in address_parts if p)
-        
-        if not full_address:
+        prop = property_result.data
+        if community_context and community_context.property_id != property_id:
+            return {'success': False, 'error': 'Community knowledge does not match this property'}
+        address = prop.get('address') or {}
+        full_address = ', '.join(str(address.get(k) or '') for k in ('street', 'city', 'state', 'zip'))
+        if not address.get('street'):
             return {'success': False, 'error': 'Property has no address'}
-        
-        logger.info(f"Discovering competitors for: {property_data['name']} at {full_address}")
-        logger.info(f"Property type filter: {property_type or 'None (no filtering)'}")
-        
-        # Try to get average rent from property units for classification
-        avg_rent = None
+        location = GeocodingService().geocode_address(full_address)
+        if not location or not location.is_street_level:
+            return {'success': False, 'error': 'Community location could not be verified. Check its street address.'}
+        profile = subject_profile(prop, community_context)
+        warnings = list(profile['warnings'])
+        properties = []
+        google = None
         try:
-            units_result = self.supabase.table('property_units').select(
-                'rent_min, rent_max'
-            ).eq('property_id', property_id).execute()
-            
-            if units_result.data:
-                rents = [u.get('rent_min') or u.get('rent_max') for u in units_result.data if u.get('rent_min') or u.get('rent_max')]
-                if rents:
-                    avg_rent = sum(rents) / len(rents)
-        except Exception as e:
-            logger.debug(f"Could not fetch units for avg rent: {e}")
-        
-        # Create subject property info for smart matching (now with property_type)
-        subject_info = SubjectPropertyInfo(
-            name=property_data['name'],
-            year_built=property_data.get('year_built'),
-            units_count=property_data.get('unit_count'),
-            avg_rent=avg_rent,
-            amenities=property_data.get('amenities') or [],
-            city=address_json.get('city', ''),
-            property_type=property_type
-        )
-        
-        # Configure and run discovery
-        config = DiscoveryConfig(
-            radius_miles=radius_miles,
-            max_competitors=max_competitors,
-            min_similarity=50.0,  # Only return competitors with 50%+ similarity
-            use_smart_matching=True
-        )
-        
-        discovery = CompetitorDiscovery(
-            proxy_url=self.proxy_url,
-            config=config,
-            subject_info=subject_info
-        )
-        
-        # Discover competitors
-        discovered = discovery.discover_from_address(
-            full_address,
-            city=address_json.get('city'),
-            state=address_json.get('state')
-        )
-        
-        logger.info(f"Discovered {len(discovered)} potential competitors")
-        
-        # Get existing competitors to avoid duplicates
-        existing_result = self.supabase.table('competitors').select(
-            'name, address'
-        ).eq('property_id', property_id).execute()
-        
-        existing_names = {c['name'].lower() for c in (existing_result.data or [])}
-        
-        # Filter out existing
-        new_competitors = [
-            d for d in discovered 
-            if d.name.lower() not in existing_names
-        ]
-        
+            from scrapers.google_places import GooglePlacesScraper
+            google = GooglePlacesScraper()
+            properties, source_warnings = google.search_discovery_pool(
+                location.latitude, location.longitude, radius_miles, search_terms(profile, community_context))
+            warnings.extend(source_warnings)
+        except Exception:
+            logger.warning('Google discovery unavailable; trying listing source')
+            warnings.append('Google Places was unavailable; results use the available listing source.')
+            try:
+                from scrapers.apartments_com import ApartmentsComScraper
+                properties = ApartmentsComScraper(self.proxy_url).search_by_location(
+                    location.city, location.state, radius_miles=int(radius_miles), max_results=100)
+            except Exception:
+                logger.warning('Listing discovery unavailable')
+            if not properties:
+                return {'success': False, 'error': 'Nearby search sources are unavailable. Try again later.'}
+        existing = self.supabase.table('competitors').select('name, address').eq('property_id', property_id).execute().data or []
+        ranked, missing = rank_candidates(properties, prop, community_context, profile,
+            location.latitude, location.longitude, radius_miles, existing)
+        if missing:
+            warnings.append(f'{missing} candidates could not be placed within the radius and were omitted.')
+        # Fetch contact/website data only after ranking; use bounded parallel requests.
+        if google:
+            def enrich(row):
+                source = row.get('ils_listings', {}).get('google_places', '')
+                if 'place_id:' not in source:
+                    return
+                try:
+                    import googlemaps
+                    client = googlemaps.Client(key=google.api_key, timeout=5, retry_timeout=5)
+                    details = client.place(place_id=source.split('place_id:')[-1], fields=['website', 'formatted_phone_number']).get('result', {})
+                    row['website_url'] = details.get('website')
+                    row['phone'] = details.get('formatted_phone_number')
+                except Exception:
+                    pass  # The source listing remains usable; contact details are optional.
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                list(executor.map(enrich, ranked[:max_competitors]))
+        # Existing auto-add callers retain their requested cap. Review UI receives the pool.
         added = []
-        if auto_add and new_competitors:
-            added = self._add_competitors(property_id, new_competitors)
-        
-        return {
-            'success': True,
-            'property_name': property_data['name'],
-            'discovered_count': len(discovered),
-            'new_count': len(new_competitors),
-            'added_count': len(added),
-            'competitors': [d.to_dict() for d in new_competitors] if not auto_add else added
-        }
-    
+        if auto_add:
+            selected = []
+            for row in ranked[:max_competitors]:
+                source = next(iter(row['ils_listings'].values()), '')
+                original = next((p for p in properties if p.name == row['name'] and p.source_url == source), None)
+                if original:
+                    original.website_url = row.get('website_url') or original.website_url
+                    original.phone = row.get('phone') or original.phone
+                    selected.append(original)
+            added = self._add_competitors(property_id, selected)
+        return {'success': True, 'property_name': prop['name'], 'discovered_count': len(properties),
+                'new_count': len(ranked), 'added_count': len(added),
+                'competitors': added if auto_add else ranked, 'profile': profile,
+                'warnings': list(dict.fromkeys(warnings)), 'collection_limit': 100}
+
     def refresh_all_competitors(
         self, 
         property_id: str,
