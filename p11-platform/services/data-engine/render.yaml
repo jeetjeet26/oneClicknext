@@ -4,6 +4,7 @@ services:
     name: oneClick
     runtime: python
     rootDir: p11-platform/services/data-engine
+    branch: main
     autoDeployTrigger: "off"
     region: virginia
     plan: standard
@@ -67,6 +68,7 @@ services:
     region: virginia
     plan: 1c-2g
     rootDir: p11-platform/services/data-engine
+    branch: main
     dockerfilePath: ./Dockerfile.community-brain
     dockerContext: .
     autoDeployTrigger: "off"

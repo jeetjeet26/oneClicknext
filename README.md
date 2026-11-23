@@ -133,7 +133,7 @@ P11 Platform is an **all-in-one AI marketing operating system** for apartment co
 | **CRM APIs** | simple-salesforce, hubspot-api-client, Yardi/RealPage REST |
 | **Data Pipelines** | Python, dlt, Apify |
 | **Auth** | Supabase Auth with Row Level Security |
-| **Deployment** | Vercel (web), Heroku (data-engine) |
+| **Deployment** | Vercel (web), Render (data engine and Community Brain worker) |
 
 ---
 
@@ -188,6 +188,13 @@ oneClick/
 ```
 
 ---
+
+## Production releases
+
+Merge changes into `main` and release from the current GitHub `main` commit. Feature branches are for development and review.
+
+- **Console.** In a clean checkout of `main`, install web dependencies and place the approved ACF Pro zip at `p11-platform/apps/web/runtime-assets/advanced-custom-fields-pro.zip`. Link the checkout to the existing Vercel `web` project and run `bash p11-platform/apps/web/scripts/stage-production-release.sh` from the repository root. The script verifies the checkout and runtime assets and stages a production deployment. Check the generated deployment, then promote it to `hellop11.com`. The licensed zip stays out of Git.
+- **Render.** For a data-engine or Community Brain worker release, trigger a manual deploy from the service’s linked `main` branch. Confirm the live commit matches the release and check the service health.
 
 ## 🚀 Quick Start
 
