@@ -15,6 +15,9 @@ export default function SettingsPage() {
           <button key={id} className={`rounded-lg border border-border px-4 py-2 text-sm ${panel === id ? 'bg-primary text-primary-foreground' : 'bg-card text-card-foreground'}`} aria-current={panel === id ? 'page' : undefined} onClick={() => setPanel(id)}>{label}</button>
         ))}
       </nav>
+      {panel === 'organization' && (
+        <Link className="block w-fit text-sm underline" href="/dashboard/settings/advertising">Agency advertising</Link>
+      )}
       <AccountSettingsWorkbench key={panel} section={panel} />
     </div>
   )

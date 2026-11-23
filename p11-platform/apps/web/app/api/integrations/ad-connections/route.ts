@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
 import { logAuditEvent } from '@/utils/audit'
 import { isPlatformOperator } from '@/utils/services/platform-operator'
+import { findGoogleAdsAdvertiser, formatGoogleAdsCustomerId, readGoogleAdsAgency } from '@/utils/marketvision/google-ads-agency'
 import { validatePropertyAccess, validatePropertyManagerAccess } from '@/utils/services/auth-guard'
 
 const CONNECTION_COLUMNS = 'id,property_id,platform,account_id,account_name,manager_account_id,is_active,connected_by,connected_at,created_at,updated_at,last_sync_at,last_sync_status,last_synced_at,last_imported_at,error_count,currency,account_timezone'
@@ -148,6 +149,34 @@ export async function POST(request: NextRequest) {
 
     if (!property) {
       return NextResponse.json({ error: 'Property not found' }, { status: 404 })
+    }
+
+    if (platform === 'google_ads') {
+      const saved = await readGoogleAdsAgency(supabase, profile.org_id)
+      if (saved) {
+        if (!saved.refreshToken) return NextResponse.json({ error: 'Authorize Google Ads in Agency advertising settings.' }, { status: 409 })
+        const selectedId = typeof account_id === 'string' ? account_id.trim().replaceAll('-', '') : ''
+        const advertiser = await findGoogleAdsAdvertiser({ ...saved.app, refreshToken: saved.refreshToken }, selectedId)
+        if (!advertiser) return NextResponse.json({ error: 'Choose an advertiser under the authorized Google Ads manager.' }, { status: 400 })
+
+        const accountId = formatGoogleAdsCustomerId(advertiser.id)
+        const accountName = advertiser.descriptiveName || `Account ${accountId}`
+        const { data: connection, error } = await supabase.rpc('link_google_ads_agency_account', {
+          p_org_id: profile.org_id, p_actor_id: user.id, p_property_id: property_id,
+          p_revision: saved.revision, p_account_id: accountId, p_account_name: accountName,
+          p_manager_id: formatGoogleAdsCustomerId(saved.app.managerId),
+        })
+        if (error?.code === '23505') return NextResponse.json({ error: 'This advertiser is already linked to a community.' }, { status: 409 })
+        if (error) throw new Error('Could not link Google Ads advertiser')
+        if (!connection || typeof connection !== 'object' || Array.isArray(connection) || typeof connection.id !== 'string') return NextResponse.json({ error: 'The Google Ads authorization changed. Reload the accounts and try again.' }, { status: 409 })
+
+        await logAuditEvent({
+          action: 'create', entityType: 'ad_account_connection', entityId: connection.id, entityName: `google_ads:${accountId}`,
+          details: { property_id, property_name: property.name, platform, account_id: accountId, account_name: accountName },
+          request,
+        })
+        return NextResponse.json({ connection }, { status: 201 })
+      }
     }
 
     // Check if this account is already linked

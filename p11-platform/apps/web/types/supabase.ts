@@ -36227,6 +36227,19 @@ export type Database = {
       }
     }
     Functions: {
+
+      read_google_ads_import_credentials: {
+        Args: { p_account_id: string; p_property_id: string }
+        Returns: Json
+      }
+      read_google_ads_agency_credentials: {
+        Args: { p_org_id: string }
+        Returns: Json
+      }
+      configure_google_ads_agency: {
+        Args: { p_app: Json; p_org_id: string; p_revision: number }
+        Returns: boolean
+      }
       _brain_accept_crm_reconciliation: {
         Args: {
           p_actor_id: string
@@ -39317,6 +39330,10 @@ export type Database = {
         }
         Returns: Json
       }
+      begin_google_ads_oauth: {
+        Args: { p_actor_id: string; p_org_id: string; p_revision: number; p_state_hash: string; p_verifier: string }
+        Returns: boolean
+      }
       begin_integration_authorization: {
         Args: { p_context: Json; p_id: string }
         Returns: Json
@@ -40170,6 +40187,10 @@ export type Database = {
         Returns: Json
       }
       claim_geo_site_crawl: { Args: { p_crawl_id?: string }; Returns: Json }
+      claim_google_ads_oauth: {
+        Args: { p_actor_id: string; p_org_id: string; p_state_hash: string }
+        Returns: Json
+      }
       claim_integration_authorization: {
         Args: { p_context: Json; p_id: string }
         Returns: Json
@@ -41346,6 +41367,10 @@ export type Database = {
         }
         Returns: Json
       }
+      finish_google_ads_oauth: {
+        Args: { p_actor_id: string; p_org_id: string; p_refresh_token: string; p_revision: number; p_state_hash: string }
+        Returns: boolean
+      }
       finish_integration_authorization: {
         Args: { p_context: Json; p_grant: Json; p_id: string }
         Returns: Json
@@ -41759,6 +41784,18 @@ export type Database = {
       link_property_to_meta_ads: {
         Args: { p_meta_account_id: string; p_property_name: string }
         Returns: string
+      }
+      link_google_ads_agency_account: {
+        Args: {
+          p_org_id: string
+          p_actor_id: string
+          p_property_id: string
+          p_revision: number
+          p_account_id: string
+          p_account_name: string
+          p_manager_id: string
+        }
+        Returns: Json
       }
       list_leadpulse_leads: {
         Args: {

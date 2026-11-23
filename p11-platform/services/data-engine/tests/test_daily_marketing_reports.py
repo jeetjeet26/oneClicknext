@@ -300,3 +300,54 @@ def test_legacy_overlap_has_an_actionable_import_status(db, monkeypatch):
     asyncio.run(pipeline.MCPMarketingSync(JOB).sync_property(PROPERTY, ['google_ads'], 'LAST_7_DAYS'))
     assert db.rows['import_jobs'][0]['status'] == 'failed'
     assert 'Historical campaign rows need account reconciliation' in db.rows['import_jobs'][0]['error_message']
+
+
+def test_agency_grant_import_reads_only_the_linked_advertiser(monkeypatch, db):
+    import httpx
+
+    manager = '1630505086'
+    advertiser = '7185923747'
+    account_calls = []
+    rpc_calls = []
+
+    def lookup(name, arguments):
+        rpc_calls.append((name, arguments))
+        return NS(execute=lambda: NS(data={
+            'app': {'managerId': manager, 'clientId': 'example-client', 'clientSecret': 'example-secret'},
+            'refreshToken': 'example-refresh', 'authorizedAt': '2026-09-14T02:00:00Z',
+        }))
+
+    def provider(request):
+        if request.url.host == 'oauth2.googleapis.com':
+            assert b'refresh_token=example-refresh' in request.content
+            return httpx.Response(200, json={'access_token': 'example-access'})
+        assert request.url.path == f'/v25/customers/{advertiser}/googleAds:search'
+        assert request.headers['login-customer-id'] == manager
+        assert request.headers['Authorization'] == 'Bearer example-access'
+        assert 'developer-token' not in request.headers
+        body = json.loads(request.content)
+        account_calls.append(body)
+        customer = {'id': advertiser, 'currencyCode': 'USD', 'timeZone': 'UTC'}
+        if 'FROM customer' in body['query']:
+            return httpx.Response(200, json={'results': [{'customer': customer}]})
+        day = '2026-09-08' if body.get('pageToken') == 'page-2' else '2026-09-07'
+        return httpx.Response(200, json={
+            'results': [{'customer': customer, 'campaign': {'id': '123', 'name': 'Campaign'},
+                         'segments': {'date': day},
+                         'metrics': {'costMicros': '12345000', 'clicks': '2', 'impressions': '100'}}],
+            **({'nextPageToken': 'page-2'} if day == '2026-09-07' else {}),
+        })
+
+    original_client = httpx.Client
+    monkeypatch.setattr(db, 'rpc', lookup)
+    monkeypatch.setattr(httpx, 'Client', lambda **options: original_client(transport=httpx.MockTransport(provider), **options))
+    sync = pipeline.MCPMarketingSync()
+    sync.reference_time = NOW
+    report = asyncio.run(sync._sync_google_ads(PROPERTY, '718-592-3747', 'LAST_7_DAYS'))
+    assert rpc_calls == [('read_google_ads_import_credentials', {
+        'p_property_id': PROPERTY, 'p_account_id': '718-592-3747',
+    })]
+    assert report['state'] == 'succeeded'
+    assert [row['date'] for row in report['records']] == ['2026-09-07', '2026-09-08']
+    assert all(row['property_id'] == PROPERTY and row['source_account_id'] == advertiser for row in report['records'])
+    assert account_calls[-1]['pageToken'] == 'page-2'

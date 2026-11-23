@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 
 const d = vi.hoisted(() => ({
-  getUser: vi.fn(), from: vi.fn(), userFrom: vi.fn(), fetch: vi.fn(), audit: vi.fn(), manage: vi.fn(),
+  getUser: vi.fn(), rpc: vi.fn(), from: vi.fn(), userFrom: vi.fn(), fetch: vi.fn(), audit: vi.fn(), manage: vi.fn(),
 }))
 vi.mock('@/utils/supabase/server', () => ({ createClient: async () => ({ auth: { getUser: d.getUser }, from: d.userFrom }) }))
-vi.mock('@/utils/supabase/admin', () => ({ createServiceClient: () => ({ from: d.from }) }))
+vi.mock('@/utils/supabase/admin', () => ({ createServiceClient: () => ({ from: d.from, rpc: d.rpc }) }))
 vi.mock('@/utils/audit', () => ({ logAuditEvent: d.audit }))
 vi.mock('@/utils/services/auth-guard', () => ({ validatePropertyManagerAccess: d.manage }))
 import { GET as metaAccounts } from '@/app/api/integrations/meta-ads/accounts/route'
@@ -58,6 +58,7 @@ beforeEach(() => {
     q.then = (resolve: (value: unknown) => unknown) => Promise.resolve(result()).then(resolve)
     return q
   }
+  d.rpc.mockResolvedValue({ data: null, error: null })
   d.from.mockImplementation(query)
   d.userFrom.mockImplementation(query)
   d.fetch.mockImplementation(async (input: string | URL) => {

@@ -1,5 +1,5 @@
 """Performance reporting tools."""
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, TYPE_CHECKING
 from pathlib import Path
 import sys
 
@@ -8,6 +8,9 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 from shared.formatters import format_currency, format_number
 
 from ..auth import get_client, get_mcc_id, clean_customer_id
+
+if TYPE_CHECKING:
+    from ..agency_reporting import AgencyGrant
 
 DateRange = Literal[
     "TODAY", "YESTERDAY", "LAST_7_DAYS", "LAST_14_DAYS", 
@@ -99,8 +102,10 @@ async def get_campaign_performance(
     
     return campaigns
 
-async def get_daily_campaign_performance(customer_id: str, date_range: DateRange, reference_time=None) -> dict[str, Any]:
-    """Read every campaign/day using the SDK pager, without a campaign limit."""
+async def get_daily_campaign_performance(
+    customer_id: str, date_range: DateRange, reference_time=None, *, agency_grant: 'AgencyGrant | None' = None,
+) -> dict[str, Any]:
+    """Read every campaign/day across all report pages."""
     import asyncio
     from decimal import Decimal
     from shared.daily_reports import ReportValidationError, DATE_RANGES, account_id, reporting_window
@@ -109,14 +114,11 @@ async def get_daily_campaign_performance(customer_id: str, date_range: DateRange
     if date_range not in DATE_RANGES:
         raise ReportValidationError('Unsupported date range')
 
-    def fetch():
-        client = get_client()
-        service = client.get_service('GoogleAdsService')
-        # login_customer_id is configured on the client, not a search() argument.
-        accounts = list(service.search(customer_id=clean_id, query="""
+    def collect(search):
+        accounts = list(search("""
             SELECT customer.id, customer.currency_code, customer.time_zone
             FROM customer
-        """, timeout=60))
+        """))
         if len(accounts) != 1 or str(accounts[0].customer.id) != clean_id:
             raise ReportValidationError('Google Ads returned an unexpected account')
         account = accounts[0].customer
@@ -130,8 +132,7 @@ async def get_daily_campaign_performance(customer_id: str, date_range: DateRange
             ORDER BY segments.date ASC, campaign.id ASC
         """
         rows = []
-        # Iterating the SearchPager consumes subsequent pages as well.
-        for row in service.search(customer_id=clean_id, query=query, timeout=60):
+        for row in search(query):
             if len(rows) >= 50_000:
                 raise ReportValidationError('Daily report exceeds the bounded import capacity')
             rows.append({
@@ -146,7 +147,18 @@ async def get_daily_campaign_performance(customer_id: str, date_range: DateRange
                 'timezone': account.time_zone, 'start_date': start, 'end_date': end, 'rows': rows,
                 'pagination_complete': True}
 
-    # The official Google Ads client is synchronous; keep status requests responsive.
+    def fetch():
+        if agency_grant is not None:
+            import httpx
+            from ..agency_reporting import AgencyReporting
+
+            with httpx.Client(timeout=30, follow_redirects=False) as client:
+                return collect(AgencyReporting(client, agency_grant, clean_id).search)
+
+        service = get_client().get_service('GoogleAdsService')
+        return collect(lambda query: service.search(customer_id=clean_id, query=query, timeout=60))
+
+    # Both reporting transports are synchronous. Keep status requests responsive.
     return await asyncio.to_thread(fetch)
 
 

@@ -69,6 +69,9 @@ class MemoryDatabase:
         self.events, self.fail, self.empty_response = [], set(), set()
         self.drop_insert = self.lost_insert_response = False
     def table(self, name): return MemoryQuery(self, name)
+    def rpc(self, name, params):
+        assert name == 'read_google_ads_import_credentials'
+        return SimpleNamespace(execute=lambda: SimpleNamespace(data=None))
 
 
 @pytest.fixture

@@ -3,12 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const authGetUserMock = vi.fn()
 const createClientMock = vi.fn()
 const fromMock = vi.fn()
+const rpcMock = vi.fn()
 
 vi.mock('@/utils/supabase/server', () => ({
   createClient: createClientMock,
 }))
 vi.mock('@/utils/supabase/admin', () => ({
-  createServiceClient: () => ({ from: fromMock }),
+  createServiceClient: () => ({ from: fromMock, rpc: rpcMock }),
 }))
 
 describe('integrations google-ads accounts route auth', () => {
@@ -39,6 +40,7 @@ describe('Google Ads manager discovery', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     vi.stubGlobal('fetch', fetchMock)
+    rpcMock.mockResolvedValue({ data: null, error: null })
     const user = { id: 'console-operator' }
     vi.stubEnv('P11_OPERATIONS_ADMIN_IDS', user.id)
     vi.stubEnv('GOOGLE_ADS_CUSTOMER_ID', '123-456-7890')

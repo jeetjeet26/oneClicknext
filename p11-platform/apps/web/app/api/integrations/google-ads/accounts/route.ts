@@ -4,7 +4,11 @@ import { isPlatformOperator } from '@/utils/services/platform-operator'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
-const GOOGLE_ADS_API_VERSION = 'v25'
+import {
+  formatGoogleAdsCustomerId, googleAdsSearch, googleAdsTokenRequest, legacyGoogleAdsGrant, readGoogleAdsAgency,
+  type GoogleAdsGrant,
+} from '@/utils/marketvision/google-ads-agency'
+
 const MAX_ACCOUNT_PAGES = 100
 
 // customer_client includes descendants at all depths under the configured manager.
@@ -30,43 +34,19 @@ const accountPage = z.object({
   nextPageToken: z.string().optional(),
 }).refine(page => !page.nextPageToken || page.results !== undefined)
 
-function formatCustomerId(id: string) {
-  return `${id.slice(0, 3)}-${id.slice(3, 6)}-${id.slice(6)}`
-}
-
-async function listManagerAccounts(mccId: string, developerToken: string, oauth: URLSearchParams) {
-  const requestOptions = {
-    method: 'POST',
-    redirect: 'error',
-    cache: 'no-store',
-    signal: AbortSignal.timeout(25_000),
-  } as const
-  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-    ...requestOptions,
-    body: oauth,
-  })
-  if (!tokenResponse.ok) throw new Error(`Google OAuth returned HTTP ${tokenResponse.status}`)
-  const { access_token } = z.object({ access_token: z.string().min(1) }).parse(await tokenResponse.json())
+async function listManagerAccounts(grant: GoogleAdsGrant) {
+  const signal = AbortSignal.timeout(25_000)
+  const { access_token } = await googleAdsTokenRequest(grant, {
+    grant_type: 'refresh_token', refresh_token: grant.refreshToken,
+  }, signal)
 
   const accounts = new Map<string, z.infer<typeof customerClient>>()
   const seenPageTokens = new Set<string>()
   let pageToken: string | undefined
   do {
-    const response = await fetch(
-      `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${mccId}/googleAds:search`,
-      {
-        ...requestOptions,
-        headers: {
-          Authorization: `Bearer ${access_token}`,
-          'developer-token': developerToken,
-          'login-customer-id': mccId,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ query: accountQuery, pageToken }),
-      },
-    )
-    if (!response.ok) throw new Error(`Google Ads account lookup returned HTTP ${response.status}`)
-    const page = accountPage.parse(await response.json())
+    const page = accountPage.parse(await googleAdsSearch(
+      grant.managerId, access_token, accountQuery, signal, pageToken, grant.developerToken,
+    ))
     for (const { customerClient: customer } of page.results ?? []) {
       if (!customer.manager) accounts.set(customer.id, customer)
     }
@@ -80,7 +60,7 @@ async function listManagerAccounts(mccId: string, developerToken: string, oauth:
   } while (pageToken)
 
   return [...accounts.values()].map(customer => ({
-    customer_id: formatCustomerId(customer.id),
+    customer_id: formatGoogleAdsCustomerId(customer.id),
     descriptive_name: customer.descriptiveName || `Account ${customer.id}`,
     currency_code: customer.currencyCode,
     time_zone: customer.timeZone,
@@ -108,26 +88,23 @@ export async function GET() {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 
-    const mccId = process.env.GOOGLE_ADS_CUSTOMER_ID?.trim().replace(/-/g, '')
-    const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN?.trim()
-    const clientId = process.env.GOOGLE_ADS_CLIENT_ID?.trim()
-    const clientSecret = process.env.GOOGLE_ADS_CLIENT_SECRET?.trim()
-    const refreshToken = process.env.GOOGLE_ADS_REFRESH_TOKEN?.trim()
-    if (!mccId || !/^\d{10}$/.test(mccId) || !developerToken || !clientId || !clientSecret || !refreshToken) {
-      return NextResponse.json({ error: 'Google Ads not configured', accounts: [], configured: false })
+    const saved = await readGoogleAdsAgency(supabase, profile.org_id)
+    const grant = saved
+      ? saved.refreshToken && { ...saved.app, refreshToken: saved.refreshToken }
+      : legacyGoogleAdsGrant()
+    if (!grant) {
+      return NextResponse.json({
+        error: 'Authorize Google Ads once in Agency advertising settings, then select an advertiser here.',
+        accounts: [], configured: false,
+      })
     }
 
     let accounts: Awaited<ReturnType<typeof listManagerAccounts>>
     try {
-      accounts = await listManagerAccounts(mccId, developerToken, new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: refreshToken,
-        grant_type: 'refresh_token',
-      }))
+      accounts = await listManagerAccounts(grant)
     } catch {
       return NextResponse.json({
-        error: 'Could not list Google Ads accounts. Check the OAuth grant, developer token, and configured manager account.',
+        error: 'Could not list Google Ads accounts. Check the manager account authorization in Agency advertising settings.',
         accounts: [], configured: true,
       }, { status: 502 })
     }
@@ -152,7 +129,7 @@ export async function GET() {
       }
     })
 
-    return NextResponse.json({ accounts: accountsWithStatus, mcc_id: formatCustomerId(mccId), configured: true })
+    return NextResponse.json({ accounts: accountsWithStatus, mcc_id: formatGoogleAdsCustomerId(grant.managerId), configured: true })
   } catch {
     return NextResponse.json({
       error: 'Could not load saved Google Ads connections.', accounts: [], configured: true,

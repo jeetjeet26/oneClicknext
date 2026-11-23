@@ -10,7 +10,7 @@ export function PropertyBoundary({ children }: { children: ReactNode }) {
   const { loading, loadError, currentProperty, refreshProperties } = usePropertyContext();
   // Property setup and account administration must be reachable before the first property exists.
   const independent = pathname === '/dashboard/portfolio' || pathname === '/dashboard/community-brain' || pathname === '/dashboard/properties' || pathname.startsWith('/dashboard/properties/') ||
-    pathname === '/dashboard/profile' || pathname === '/dashboard/team' || pathname === '/dashboard/settings';
+    pathname === '/dashboard/profile' || pathname === '/dashboard/team' || pathname === '/dashboard/settings' || pathname === '/dashboard/settings/advertising';
   if (independent) return children;
   if (!loading && !loadError && currentProperty.id) {
     // Clear property-specific drafts and in-flight client effects when the scope changes.

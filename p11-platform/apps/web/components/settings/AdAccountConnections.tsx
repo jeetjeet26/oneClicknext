@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 
 type Platform = 'google_ads' | 'meta_ads'
 const platforms = [
@@ -106,7 +107,12 @@ function AccountPicker({ endpoint, label, propertyName, onClose, onLink }: {
     <p className="text-sm text-muted-foreground">Choose an ad account dedicated to {propertyName}. Imports include the entire ad account.</p>
     {load.error ? <>
       <p role="alert" className="text-sm text-red-700">{load.error}</p>
-      <button type="button" className={outlineButton} onClick={() => { setLoad({}); setAttempt(value => value + 1) }}>Retry loading accounts</button>
+      <div className="flex flex-wrap items-center gap-3">
+        {endpoint === '/api/integrations/google-ads/accounts' && (
+          <Link href="/dashboard/settings/advertising" className="text-sm underline">Open Agency advertising settings</Link>
+        )}
+        <button type="button" className={outlineButton} onClick={() => { setLoad({}); setAttempt(value => value + 1) }}>Retry loading accounts</button>
+      </div>
     </> : !load.candidates ? <p role="status" className="text-sm">Loading available accounts…</p> : <>
       <label className="block text-sm">
         Search available accounts
