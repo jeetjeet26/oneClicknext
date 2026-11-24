@@ -1,40 +1,21 @@
 'use client';
 import { MarketingDataReview } from '@/components/charts/MarketingDataReview';
 import { SavedBiReports } from '@/components/charts/SavedBiReports';
-import { type BiReport, type BiCampaign, type BiTotals, biMetricTrend, metricCurrency, metricPercent, trendForCampaign } from '@/utils/analytics/report-data';
-import { formatConversions } from '@/utils/analytics/marketing-fact';
+import { type BiReport, type BiCampaign, trendForCampaign } from '@/utils/analytics/report-data';
+import { CampaignMetricGrid } from './CampaignMetricGrid';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { usePropertyContext } from '@/components/layout/PropertyContext';
-import { MetricCard, PerformanceChart, ChannelBreakdown, DateRangePicker, NaturalLanguageQuery, CampaignTable, CampaignDetailDrawer, ScheduleReportModal, GoalTracker, AnomalyAlert, CSVUploadModal, type DateRange } from '@/components/charts';
-import { DollarSign, MousePointerClick, Eye, Target, RefreshCw, AlertCircle, ArrowLeftRight, Calendar, CalendarClock, ChevronDown, ChevronUp, Table, Upload, Download, } from 'lucide-react';
+import { DateRangePicker, NaturalLanguageQuery, CampaignTable, CampaignDetailDrawer, ScheduleReportModal, GoalTracker, AnomalyAlert, CSVUploadModal, type DateRange } from '@/components/charts';
+import { RefreshCw, AlertCircle, ArrowLeftRight, Calendar, CalendarClock, ChevronDown, ChevronUp, Table, Upload, Download, Eye, } from 'lucide-react';
 import { LAST_30_COMPLETED_DAYS } from './DateRangePicker';
 import { format } from 'date-fns';
-import { getMarketingChannelLabel, normalizeMarketingChannelId } from '@/utils/analytics/channel-identity';
+import { getMarketingChannelLabel } from '@/utils/analytics/channel-identity';
 type AnalyticsData = BiReport & {
     sourceHash: string;
     actorId: string;
 };
 type Campaign = BiCampaign;
-const count = (value: number) => value.toLocaleString();
-const compactCount = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
-const compactCurrency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 2 });
-const trendMetrics = {
-    spend: { label: 'Spend', format: metricCurrency },
-    impressions: { label: 'Impressions', format: count },
-    clicks: { label: 'Clicks', format: count },
-    conversions: { label: 'Reported conversions', format: formatConversions },
-    ctr: { label: 'Click-through rate', format: metricPercent },
-    cpc: { label: 'Cost per click', format: metricCurrency },
-    cpa: { label: 'Cost per reported conversion', format: metricCurrency },
-} satisfies Record<keyof BiTotals, { label: string; format: (value: number) => string }>;
-const metricOptions = Object.entries(trendMetrics);
-const trendSelect = 'rounded-lg border border-border bg-background px-2 py-2 text-slate-900';
-
-function trendTick(metric: keyof BiTotals) {
-    if (metric === 'ctr') return (value: number) => `${compactCount.format(value)}%`;
-    return ['spend', 'cpc', 'cpa'].includes(metric) ? compactCurrency.format : compactCount.format;
-}
 function PropertyBI() {
     const { currentProperty } = usePropertyContext();
     const [dateRange, setDateRange] = useState<DateRange>(LAST_30_COMPLETED_DAYS);
@@ -43,9 +24,6 @@ function PropertyBI() {
     const [error, setError] = useState<string | null>(null);
     const [compareEnabled, setCompareEnabled] = useState(true); // Enable comparison by default
     const [showCampaigns, setShowCampaigns] = useState(true);
-    const [trendMetric, setTrendMetric] = useState<keyof BiTotals>('spend');
-    const [secondaryMetric, setSecondaryMetric] = useState<keyof BiTotals | ''>('clicks');
-    const [trendStyle, setTrendStyle] = useState<'lines' | 'bars'>('lines');
     const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
     const [showScheduleModal, setShowScheduleModal] = useState(false);
     const [showUploadModal, setShowUploadModal] = useState(false);
@@ -109,19 +87,6 @@ function PropertyBI() {
     const priorDays = data?.comparison?.timeSeries.length ?? 0;
     const comparablePeriods = !!data?.comparison && data.coverage.observedDays === data.coverage.requestedDays
         && priorDays === data.coverage.requestedDays;
-    const periodChanges = comparablePeriods ? data?.comparison?.changes : null;
-    const trend = useMemo(() => {
-        if (!data) return [];
-        const primary = biMetricTrend(data, trendMetric);
-        const secondary = secondaryMetric ? biMetricTrend(data, secondaryMetric) : [];
-        return primary.map((point, index) => ({
-            ...point,
-            secondary: secondary[index]?.current ?? null,
-            secondaryPrevious: secondary[index]?.previous ?? null,
-        }));
-    }, [data, trendMetric, secondaryMetric]);
-    const primaryMetric = trendMetrics[trendMetric];
-    const rightMetric = secondaryMetric ? trendMetrics[secondaryMetric] : null;
     const hasData = data && (data.timeSeries.length > 0 || data.channels.length > 0);
     return (<div className="space-y-6">
       {/* Header */}
@@ -219,146 +184,8 @@ function PropertyBI() {
           </div>
         </div>)}
 
-      {/* Metrics Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard title="Total Spend" value={data?.totals.spend ?? '—'} prefix={data?.totals.spend === null || !data ? '' : '$'} change={compareEnabled && periodChanges?.spend !== null ? periodChanges?.spend : undefined} changeLabel="vs previous period" previousValue={data?.comparison?.totals?.spend ?? undefined} showPrevious={comparablePeriods} icon={<DollarSign size={20}/>} loading={loading}/>
-        <MetricCard title="Impressions" value={data?.totals.impressions ?? '—'} change={compareEnabled && periodChanges?.impressions !== null ? periodChanges?.impressions : undefined} changeLabel="vs previous period" previousValue={data?.comparison?.totals?.impressions} showPrevious={comparablePeriods} icon={<Eye size={20}/>} loading={loading}/>
-        <MetricCard title="Clicks" value={data?.totals.clicks ?? '—'} change={compareEnabled && periodChanges?.clicks !== null ? periodChanges?.clicks : undefined} changeLabel="vs previous period" previousValue={data?.comparison?.totals?.clicks} showPrevious={comparablePeriods} icon={<MousePointerClick size={20}/>} loading={loading}/>
-        <MetricCard title="Conversions" value={data ? formatConversions(data.totals.conversions) : '—'} change={compareEnabled && periodChanges?.conversions !== null ? periodChanges?.conversions : undefined} changeLabel="vs previous period" previousValue={data?.comparison?.totals?.conversions} showPrevious={comparablePeriods} icon={<Target size={20}/>} loading={loading}/>
-      </div>
-
-      {/* Charts Row */}
-      {!error && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Time Series Chart */}
-          <div className="lg:col-span-2">
-            {hasData ? (
-              <PerformanceChart
-                data={trend}
-                axes={[
-                  { side: 'left', color: '#6d28d9', formatValue: primaryMetric.format, formatTick: trendTick(trendMetric) },
-                  ...(secondaryMetric && rightMetric ? [{
-                    side: 'right' as const, color: '#047857', formatValue: rightMetric.format, formatTick: trendTick(secondaryMetric),
-                  }] : []),
-                ]}
-                series={[
-                  { key: 'current', name: primaryMetric.label, axis: 'left', bar: trendStyle === 'bars' },
-                  ...(rightMetric ? [{ key: 'secondary', name: rightMetric.label, axis: 'right' as const }] : []),
-                  ...(trend.some(point => point.previous !== null) ? [{
-                    key: 'previous', name: `${primaryMetric.label} (previous)`, axis: 'left' as const, dashed: true,
-                  }] : []),
-                  ...(rightMetric && trend.some(point => point.secondaryPrevious !== null) ? [{
-                    key: 'secondaryPrevious', name: `${rightMetric.label} (previous)`, axis: 'right' as const, dashed: true,
-                  }] : []),
-                ]}
-                title="Performance over time"
-                controls={
-                  <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
-                    <label className="flex flex-wrap items-center gap-2 text-violet-800">
-                      Left axis
-                      <select value={trendMetric} className={trendSelect} onChange={event => {
-                        const nextMetric = event.target.value as keyof BiTotals;
-                        if (nextMetric === secondaryMetric) setSecondaryMetric(trendMetric);
-                        setTrendMetric(nextMetric);
-                      }}>
-                        {metricOptions.map(([key, metric]) => <option key={key} value={key}>{metric.label}</option>)}
-                      </select>
-                    </label>
-                    <label className="flex flex-wrap items-center gap-2 text-emerald-800">
-                      Right axis
-                      <select value={secondaryMetric} className={trendSelect} onChange={event => setSecondaryMetric(event.target.value as keyof BiTotals | '')}>
-                        <option value="">None</option>
-                        {metricOptions.filter(([key]) => key !== trendMetric).map(([key, metric]) => <option key={key} value={key}>{metric.label}</option>)}
-                      </select>
-                    </label>
-                    <label className="flex flex-wrap items-center gap-2">
-                      Chart
-                      <select value={trendStyle} className={trendSelect} onChange={event => setTrendStyle(event.target.value as 'lines' | 'bars')}>
-                        <option value="lines">Lines</option>
-                        <option value="bars">{rightMetric ? 'Bars and line' : 'Bars'}</option>
-                      </select>
-                    </label>
-                  </div>
-                }
-              />
-            ) : (<div className="bg-white rounded-xl border border-slate-200 p-6">
-                <h3 className="text-lg font-semibold text-slate-900 mb-6">Performance Over Time</h3>
-                <div className="h-[350px] flex items-center justify-center">
-                  {loading ? (<div className="animate-pulse text-slate-400">Loading chart data...</div>) : (<div className="text-center">
-                      <div className="text-slate-400 mb-2">
-                        <Eye size={48} className="mx-auto opacity-30"/>
-                      </div>
-                      <p className="text-slate-500">No performance data available</p>
-                      <p className="text-sm text-slate-400 mt-1">
-                        No campaign records matched this property, period and filters.
-                      </p>
-                    </div>)}
-                </div>
-              </div>)}
-          </div>
-
-          {/* Channel Breakdown */}
-          <div>
-            {hasData && data.channels.length > 0 ? (<ChannelBreakdown data={data.channels.map(c => ({
-                    ...c,
-                    color: normalizeMarketingChannelId(c.channel) === 'meta_ads'
-                        ? '#1877F2'
-                        : normalizeMarketingChannelId(c.channel) === 'google_ads'
-                            ? '#EA4335'
-                            : '#6366f1'
-                }))} title="Spend by Channel" metric="spend" loading={loading}/>) : (<div className="bg-white rounded-xl border border-slate-200 p-6">
-                <h3 className="text-lg font-semibold text-slate-900 mb-6">Spend by Channel</h3>
-                <div className="h-[200px] flex items-center justify-center">
-                  {loading ? (<div className="animate-pulse text-slate-400">Loading...</div>) : (<div className="text-center">
-                      <p className="text-slate-500 text-sm">No channel data</p>
-                    </div>)}
-                </div>
-              </div>)}
-          </div>
-        </div>)}
-
-      {/* Additional Metrics Row */}
-      {hasData && (<div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* CTR Card */}
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <h3 className="text-lg font-semibold text-slate-900 mb-4">Click-Through Rate</h3>
-            <div className="flex flex-wrap items-end gap-4">
-              <div>
-                <p className="text-3xl sm:text-4xl font-bold text-indigo-600">
-                  {metricPercent(data.totals.ctr)}
-                </p>
-                <p className="text-sm text-slate-500 mt-1">Total clicks divided by total impressions</p>
-              </div>
-              <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                <div className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-500" style={{ width: `${Math.min((data.totals.ctr ?? 0) * 10, 100)}%` }}/>
-              </div>
-            </div>
-          </div>
-
-          {/* CPA Card */}
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <h3 className="text-lg font-semibold text-slate-900 mb-4">Cost Per Reported Conversion</h3>
-            <div className="flex flex-wrap items-end gap-4">
-              <div>
-                <p className="text-3xl sm:text-4xl font-bold text-emerald-600">
-                  {metricCurrency(data.totals.cpa)}
-                </p>
-                <p className="text-sm text-slate-500 mt-1">Spend divided by reported conversions</p>
-              </div>
-              {data.channels.length > 0 && (<div className="flex-1">
-                  <div className="flex gap-2">
-                    {data.channels.map(channel => (<div key={channel.channel} className="flex-1 text-center">
-                        <p className="text-xs text-slate-400 mb-1">
-                          {getMarketingChannelLabel(channel.channel)}
-                        </p>
-                        <p className="text-sm font-medium text-slate-700">
-                          {metricCurrency(channel.cpa)}
-                        </p>
-                      </div>))}
-                  </div>
-                </div>)}
-            </div>
-          </div>
-        </div>)}
+      {loading && <p role="status" className="rounded-xl border border-border p-5 text-sm text-muted-foreground">Loading campaign metrics…</p>}
+      {hasData && <CampaignMetricGrid report={data} showPrevious={channel !== 'all' && compareEnabled} showChange={comparablePeriods}/>}
 
       {/* Campaign Drill-Down Section */}
       {hasData && (<div className="bg-white rounded-xl border border-slate-200 overflow-hidden">

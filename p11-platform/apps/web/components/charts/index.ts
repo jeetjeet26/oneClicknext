@@ -1,5 +1,4 @@
 export { MetricCard } from './MetricCard'
-export { PerformanceChart } from './PerformanceChart'
 export { ChannelBreakdown } from './ChannelBreakdown'
 export { DateRangePicker, DATE_PRESETS } from './DateRangePicker'
 export { NaturalLanguageQuery } from './NaturalLanguageQuery'

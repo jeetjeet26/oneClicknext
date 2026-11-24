@@ -1,5 +1,5 @@
 import{describe,it,expect}from'vitest'
-import{buildBiReport,biMetricTrend,biExportData,reportChange,metricCurrency,metricPercent,trendForCampaign,type BiSource,type BiFact}from'./report-data'
+import{buildBiReport,biChannelTrend,biExportData,reportChange,metricCurrency,metricPercent,trendForCampaign,type BiSource,type BiFact}from'./report-data'
 import{csvCell,generateCSV,generatePDF}from'@/utils/export'
 import{goalReportValue}from'./goal-comparison'
 const fact=(overrides:Partial<BiFact>={}):BiFact=>({id:crypto.randomUUID(),date:'2026-08-03',channel_id:'google_ads',source_account_id:'1111111111',currency_code:'USD',campaign_id:'same',campaign_name:'Campaign',impressions:100,clicks:10,spend:10.01,conversions:0.125,...overrides})
@@ -11,15 +11,25 @@ describe('trustworthy marketing reports',()=>{
  it('does retain a real zero cost when there are attributed conversions',()=>expect(buildBiReport(source([fact({spend:0})])).totals.cpa).toBe(0))
  it('does not compare against an absent prior period',()=>expect(Object.values(buildBiReport(source([fact()])).comparison!.changes).every(v=>v===null)).toBe(true))
  it('does not label missing dates as zero',()=>expect(buildBiReport(source([fact()])).timeSeries).toHaveLength(1))
- it('aligns previous dates by day in the period and leaves gaps for missing data',()=>{
-   const report = buildBiReport(source(
-     [fact({ date: '2026-08-04', clicks: 0 })],
-     [fact({ date: '2026-08-01', clicks: 6 })],
-   ))
-   expect(biMetricTrend(report, 'clicks')).toEqual([
-     { date: '2026-08-03', current: null, previous: 6 },
-     { date: '2026-08-04', current: 0, previous: null },
-   ])
+ it('keeps channel trends separate and distinguishes missing days from zero',()=>{
+   const report = buildBiReport(source([
+     fact({ date: '2026-08-03', clicks: 1, spend: 10 }),
+     fact({ date: '2026-08-03', channel_id: 'google', clicks: 9, spend: 9 }),
+     fact({ date: '2026-08-03', channel_id: 'meta_ads', clicks: 2, spend: 4 }),
+     fact({ date: '2026-08-04', channel_id: 'meta_ads', clicks: 0 }),
+   ], [fact({ date: '2026-08-01', clicks: 6 })]))
+   const trend = biChannelTrend(report)
+   expect(trend[0]).toMatchObject({
+     date: '2026-08-03',
+     channels: { google_ads: { clicks: 10, cpc: 1.9 }, meta_ads: { clicks: 2, cpc: 2 } },
+     previous: { clicks: 6 },
+   })
+   expect(trend[1]).toMatchObject({
+     date: '2026-08-04',
+     channels: { meta_ads: { clicks: 0, cpc: null } },
+     previous: null,
+   })
+   expect(trend[1].channels).not.toHaveProperty('google_ads')
  })
  it('withholds dollars and dollar ratios for unconfirmed currency',()=>{const r=buildBiReport(source([fact(),fact({currency_code:null,source_account_id:null})]));expect(r.totals).toMatchObject({spend:null,cpc:null,cpa:null,clicks:20});expect(r.coverage.unknownAccountRecords).toBe(1);expect(r.coverage.currencyKnown).toBe(false)})
  it('allows explicitly non-spend GA4 records without a currency',()=>expect(buildBiReport(source([fact({channel_id:'ga4',spend:0,currency_code:null})])).totals.spend).toBe(0))

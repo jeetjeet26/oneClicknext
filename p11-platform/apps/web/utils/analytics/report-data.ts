@@ -83,24 +83,31 @@ export function buildBiReport(source: BiSource) {
 export type BiReport = ReturnType<typeof buildBiReport>;
 export type BiCampaign = BiReport['campaigns'][number];
 
-export function biMetricTrend(report: BiReport, metric: keyof BiTotals) {
+export function biChannelTrend(report: BiReport) {
     const dates = eachDayOfInterval({
         start: parseISO(report.dateRange.start),
         end: parseISO(report.dateRange.end),
     });
-    const current = new Map(report.timeSeries.map(day => [day.date, day[metric]]));
-    const previous = new Map(report.comparison?.timeSeries.map(day => [day.date, day[metric]]));
-    const priorStart = report.comparison?.previousPeriod?.start;
+    const current = new Map(groups(report.source.currentRows, row => row.date).map(([date, rows]) => [
+        date,
+        Object.fromEntries(groups(rows, row => normalizeMarketingChannelId(row.channel_id))
+            .map(([channel, channelRows]) => [channel, totals(channelRows)])),
+    ]));
+    const previous = new Map(report.comparison?.timeSeries.map(({ date, ...values }) => [date, values]));
+    const previousStart = report.comparison?.previousPeriod?.start;
+    const priorStart = previousStart ? parseISO(previousStart) : null;
+
     return dates.map((day, index) => {
         const date = format(day, 'yyyy-MM-dd');
-        const previousDate = priorStart ? format(addDays(parseISO(priorStart), index), 'yyyy-MM-dd') : null;
         return {
             date,
-            current: current.get(date) ?? null,
-            previous: previousDate ? previous.get(previousDate) ?? null : null,
+            channels: current.get(date) ?? {},
+            previous: priorStart ? previous.get(format(addDays(priorStart, index), 'yyyy-MM-dd')) ?? null : null,
         };
     });
 }
+export type BiChannelTrendDay = ReturnType<typeof biChannelTrend>[number];
+
 export function biExportData(report: BiReport, metadata: {
     id: string;
     sourceHash: string;
