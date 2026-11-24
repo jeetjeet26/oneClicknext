@@ -1,15 +1,16 @@
 'use client'
 
-import { useId, useMemo, type ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import {
-  AreaChart,
-  Area,
+  Bar,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Legend,
 } from 'recharts'
 import { format, parseISO } from 'date-fns'
 
@@ -18,151 +19,106 @@ type DataPoint = {
   [key: string]: string | number | null
 }
 
-type PerformanceChartProps = {
-  data: DataPoint[]
-  lines: {
-    key: string
-    name: string
-    color: string
-    dashed?: boolean
-  }[]
-  title?: string
-  controls?: ReactNode
-  formatValue?: (value: number) => string
-  loading?: boolean
-  height?: number
+type PerformanceAxis = {
+  side: 'left' | 'right'
+  color: string
+  formatTick: (value: number) => string
+  formatValue: (value: number) => string
 }
 
-export function PerformanceChart({
-  data,
-  lines,
-  title,
-  controls,
-  formatValue,
-  loading = false,
-  height = 350
-}: PerformanceChartProps) {
-  const gradientId = useId()
-  const formattedData = useMemo(() => {
-    return data.map(point => ({
-      ...point,
-      formattedDate: format(parseISO(point.date), 'MMM d'),
-    }))
-  }, [data])
+type PerformanceSeries = {
+  key: string
+  name: string
+  axis: PerformanceAxis['side']
+  dashed?: boolean
+  bar?: boolean
+}
 
-  if (loading) {
-    return (
-      <div className="bg-white rounded-xl border border-slate-200 p-6">
-        {title && <div className="h-6 bg-slate-200 rounded w-40 mb-6 animate-pulse"></div>}
-        <div className="animate-pulse" style={{ height }}>
-          <div className="h-full bg-slate-100 rounded-lg"></div>
-        </div>
-      </div>
-    )
-  }
+type PerformanceChartProps = {
+  data: DataPoint[]
+  axes: PerformanceAxis[]
+  series: PerformanceSeries[]
+  title: string
+  controls: ReactNode
+}
+
+export function PerformanceChart({ data, axes, series, title, controls }: PerformanceChartProps) {
+  const formattedData = useMemo(() => data.map(point => ({
+    ...point,
+    formattedDate: format(parseISO(point.date), 'MMM d'),
+  })), [data])
+  const hasValues = data.some(point => series.some(item => typeof point[item.key] === 'number'))
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-6">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        {title && <h3 className="text-lg font-semibold text-slate-900">{title}</h3>}
+    <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-4 sm:p-6">
+      <div className="mb-4 space-y-3">
+        <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
         {controls}
       </div>
-
-      {data.some(point => lines.some(line => typeof point[line.key] === 'number')) ? (
-        <ResponsiveContainer width="100%" height={height}>
-          <AreaChart data={formattedData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-            <defs>
-              {lines.map((line) => (
-                <linearGradient key={line.key} id={`${gradientId}-${line.key}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={line.color} stopOpacity={0.3} />
-                  <stop offset="95%" stopColor={line.color} stopOpacity={0} />
-                </linearGradient>
-              ))}
-            </defs>
-
+      {hasValues ? (
+        <ResponsiveContainer width="100%" height={350}>
+          <ComposedChart data={formattedData} margin={{ top: 10, right: 4, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-
             <XAxis
               dataKey="formattedDate"
               axisLine={false}
               tickLine={false}
               tick={{ fill: '#64748b', fontSize: 12 }}
               minTickGap={24}
-              dy={10}
+              dy={8}
             />
-
-            <YAxis
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: '#64748b', fontSize: 12 }}
-              dx={-10}
-              width={82}
-              tickFormatter={formatValue ?? ((value: number) => {
-                if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`
-                if (value >= 1000) return `${(value / 1000).toFixed(0)}K`
-                return value.toString()
-              })}
-            />
-
-            <Tooltip
-              contentStyle={{
-                backgroundColor: '#1e293b',
-                border: 'none',
-                borderRadius: '8px',
-                boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
-              }}
-              labelStyle={{ color: '#94a3b8', marginBottom: '8px' }}
-              itemStyle={{ color: '#fff' }}
-              formatter={(value, name) => {
-                const numeric = value == null ? null : Number(value)
-                const formatted = numeric === null ? 'Not available' : formatValue?.(numeric) ?? numeric.toLocaleString()
-                return [formatted, name]
-              }}
-            />
-
-            <Legend
-              wrapperStyle={{ paddingTop: '20px' }}
-              iconType="circle"
-              iconSize={8}
-            />
-
-            {lines.map((line) => (
-              <Area
-                key={line.key}
-                type="monotone"
-                dataKey={line.key}
-                name={line.name}
-                stroke={line.color}
-                strokeWidth={2}
-                strokeDasharray={line.dashed ? '5 4' : undefined}
-                fill={line.dashed ? 'none' : `url(#${gradientId}-${line.key})`}
-                connectNulls={false}
-                dot={{ r: 2, strokeWidth: 0, fill: line.color }}
-                activeDot={{ r: 6, strokeWidth: 2, stroke: '#fff' }}
+            {axes.map(axis => (
+              <YAxis
+                key={axis.side}
+                yAxisId={axis.side}
+                orientation={axis.side}
+                domain={[0, 'auto']}
+                axisLine={false}
+                tickLine={false}
+                tick={{ fill: axis.color, fontSize: 11 }}
+                width={54}
+                tickCount={5}
+                tickFormatter={axis.formatTick}
               />
             ))}
-          </AreaChart>
+            <Tooltip
+              contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px' }}
+              labelStyle={{ color: '#e2e8f0' }}
+              itemStyle={{ color: '#fff' }}
+              formatter={(value, name, item) => {
+                const line = series.find(entry => entry.key === item.dataKey)
+                const axis = axes.find(entry => entry.side === line?.axis)
+                return [value == null ? 'Not available' : axis?.formatValue(Number(value)) ?? String(value), name]
+              }}
+            />
+            <Legend wrapperStyle={{ paddingTop: '14px' }} />
+            {series.map(item => {
+              const color = axes.find(axis => axis.side === item.axis)?.color
+              return item.bar ? (
+                <Bar key={item.key} yAxisId={item.axis} dataKey={item.key} name={item.name} fill={color} fillOpacity={0.75} radius={[3, 3, 0, 0]} maxBarSize={30} />
+              ) : (
+                <Line
+                  key={item.key}
+                  yAxisId={item.axis}
+                  dataKey={item.key}
+                  name={item.name}
+                  stroke={color}
+                  strokeWidth={item.dashed ? 1.5 : 2.5}
+                  strokeOpacity={item.dashed ? 0.65 : 1}
+                  strokeDasharray={item.dashed ? '5 4' : undefined}
+                  connectNulls={false}
+                  dot={{ r: 2, strokeWidth: 0, fill: color }}
+                  activeDot={{ r: 5 }}
+                />
+              )
+            })}
+          </ComposedChart>
         </ResponsiveContainer>
       ) : (
-        <p className="flex items-center justify-center text-sm text-slate-500" style={{ minHeight: height }}>
-          No values are available for this metric in the selected dates.
+        <p className="flex min-h-[350px] items-center justify-center text-sm text-slate-500">
+          No values are available for these metrics in the selected dates.
         </p>
       )}
     </div>
   )
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

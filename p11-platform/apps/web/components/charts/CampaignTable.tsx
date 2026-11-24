@@ -1,6 +1,7 @@
 'use client'
 
 import { formatConversions, campaignIdentity } from '@/utils/analytics/marketing-fact'
+import { metricCurrency } from '@/utils/analytics/report-data'
 
 import { useState, useMemo } from 'react'
 import { 
@@ -169,6 +170,11 @@ export function CampaignTable({
   }
 
   const hasActiveFilters = searchTerm || selectedChannel
+  const totalClicks = filteredCampaigns.reduce((sum, campaign) => sum + campaign.clicks, 0)
+  const totalSpend = filteredCampaigns.some(campaign => campaign.spend === null)
+    ? null
+    : filteredCampaigns.reduce((sum, campaign) => sum + (campaign.spend ?? 0), 0)
+  const averageCpc = totalSpend === null || totalClicks === 0 ? null : totalSpend / totalClicks
 
   if (loading) {
     return (
@@ -325,6 +331,17 @@ export function CampaignTable({
               </th>
               <th className="text-right px-4 py-3">
                 <button
+                  onClick={() => handleSort('cpc')}
+                  aria-label="Cost per click"
+                  title="Spend divided by clicks"
+                  className="group ml-auto flex items-center justify-end gap-1 text-xs font-semibold uppercase tracking-wider text-slate-500 hover:text-slate-700"
+                >
+                  CPC
+                  <SortIcon sortConfig={sortConfig} columnKey="cpc" />
+                </button>
+              </th>
+              <th className="text-right px-4 py-3">
+                <button
                   onClick={() => handleSort('ctr')}
                   className="group flex items-center justify-end gap-1 text-xs font-semibold text-slate-500 uppercase tracking-wider hover:text-slate-700 ml-auto"
                 >
@@ -361,7 +378,7 @@ export function CampaignTable({
           <tbody className="divide-y divide-slate-100">
             {filteredCampaigns.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-4 py-12 text-center">
+                <td colSpan={11} className="px-4 py-12 text-center">
                   <p className="text-slate-500">No campaigns found</p>
                   {hasActiveFilters && (
                     <button
@@ -410,6 +427,9 @@ export function CampaignTable({
                       {formatNumber(campaign.clicks)}
                     </td>
                     <td className="px-4 py-4 text-right text-slate-600">
+                      {metricCurrency(campaign.cpc)}
+                    </td>
+                    <td className="px-4 py-4 text-right text-slate-600">
                       {formatPercent(campaign.ctr)}
                     </td>
                     <td className="px-4 py-4 text-right">
@@ -448,13 +468,13 @@ export function CampaignTable({
           <div className="flex flex-wrap items-center gap-4 text-sm text-slate-600">
             <span>
               <strong className="text-slate-900">
-                {formatCurrency(filteredCampaigns.some(c=>c.spend===null)?null:filteredCampaigns.reduce((sum,c)=>sum+c.spend!,0))}
+                {formatCurrency(totalSpend)}
               </strong> total spend
             </span>
             <span className="text-slate-300">|</span>
             <span>
               <strong className="text-slate-900">
-                {formatNumber(filteredCampaigns.reduce((sum, c) => sum + c.clicks, 0))}
+                {formatNumber(totalClicks)}
               </strong> clicks
             </span>
             <span className="text-slate-300">|</span>
@@ -462,6 +482,10 @@ export function CampaignTable({
               <strong className="text-slate-900">
                 {formatConversions(filteredCampaigns.reduce((sum, c) => sum + c.conversions, 0))}
               </strong> conversions
+            </span>
+            <span className="text-slate-300">|</span>
+            <span title="Total spend divided by total clicks across campaigns matching the filters">
+              <strong className="text-slate-900">{metricCurrency(averageCpc)}</strong> avg CPC
             </span>
             <span className="text-slate-300">|</span>
             <span>
