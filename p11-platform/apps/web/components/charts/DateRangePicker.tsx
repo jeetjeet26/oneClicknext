@@ -34,6 +34,12 @@ type DateRangePickerProps = {
   onChange: (range: DateRange) => void
 }
 
+export const LAST_30_COMPLETED_DAYS: DateRange = {
+  label: 'Last 30 completed days',
+  start: subDays(new Date(), 30),
+  end: subDays(new Date(), 1),
+}
+
 const PRESETS: DateRange[] = [
   {
     label: 'Last 7 days',
@@ -50,6 +56,7 @@ const PRESETS: DateRange[] = [
     start: subDays(new Date(), 29),
     end: new Date(),
   },
+  LAST_30_COMPLETED_DAYS,
   {
     label: 'Last 90 days',
     start: subDays(new Date(), 89),

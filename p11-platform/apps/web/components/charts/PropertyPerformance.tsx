@@ -1,13 +1,14 @@
 'use client';
 import { MarketingDataReview } from '@/components/charts/MarketingDataReview';
 import { SavedBiReports } from '@/components/charts/SavedBiReports';
-import { type BiReport, type BiCampaign, metricCurrency, metricPercent, trendForCampaign } from '@/utils/analytics/report-data';
+import { type BiReport, type BiCampaign, type BiTotals, biMetricTrend, metricCurrency, metricPercent, trendForCampaign } from '@/utils/analytics/report-data';
 import { formatConversions } from '@/utils/analytics/marketing-fact';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { usePropertyContext } from '@/components/layout/PropertyContext';
-import { MetricCard, PerformanceChart, ChannelBreakdown, DateRangePicker, NaturalLanguageQuery, CampaignTable, CampaignDetailDrawer, ScheduleReportModal, GoalTracker, AnomalyAlert, CSVUploadModal, DATE_PRESETS, type DateRange } from '@/components/charts';
+import { MetricCard, PerformanceChart, ChannelBreakdown, DateRangePicker, NaturalLanguageQuery, CampaignTable, CampaignDetailDrawer, ScheduleReportModal, GoalTracker, AnomalyAlert, CSVUploadModal, type DateRange } from '@/components/charts';
 import { DollarSign, MousePointerClick, Eye, Target, RefreshCw, AlertCircle, ArrowLeftRight, Calendar, CalendarClock, ChevronDown, ChevronUp, Table, Upload, Download, } from 'lucide-react';
+import { LAST_30_COMPLETED_DAYS } from './DateRangePicker';
 import { format } from 'date-fns';
 import { getMarketingChannelLabel, normalizeMarketingChannelId } from '@/utils/analytics/channel-identity';
 type AnalyticsData = BiReport & {
@@ -15,14 +16,25 @@ type AnalyticsData = BiReport & {
     actorId: string;
 };
 type Campaign = BiCampaign;
+const count = (value: number) => value.toLocaleString();
+const trendMetrics = {
+    spend: { label: 'Spend', format: metricCurrency },
+    impressions: { label: 'Impressions', format: count },
+    clicks: { label: 'Clicks', format: count },
+    conversions: { label: 'Reported conversions', format: formatConversions },
+    ctr: { label: 'Click-through rate', format: metricPercent },
+    cpc: { label: 'Cost per click', format: metricCurrency },
+    cpa: { label: 'Cost per reported conversion', format: metricCurrency },
+} satisfies Record<keyof BiTotals, { label: string; format: (value: number) => string }>;
 function PropertyBI() {
     const { currentProperty } = usePropertyContext();
-    const [dateRange, setDateRange] = useState<DateRange>(DATE_PRESETS[2]); // Last 30 days
+    const [dateRange, setDateRange] = useState<DateRange>(LAST_30_COMPLETED_DAYS);
     const [data, setData] = useState<AnalyticsData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [compareEnabled, setCompareEnabled] = useState(true); // Enable comparison by default
-    const [showCampaigns, setShowCampaigns] = useState(false);
+    const [showCampaigns, setShowCampaigns] = useState(true);
+    const [trendMetric, setTrendMetric] = useState<keyof BiTotals>('spend');
     const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
     const [showScheduleModal, setShowScheduleModal] = useState(false);
     const [showUploadModal, setShowUploadModal] = useState(false);
@@ -83,8 +95,12 @@ function PropertyBI() {
             return () => document.removeEventListener('click', handleClickOutside);
         }
     }, [showImportMenu]);
-    // Get period-over-period changes from actual data
-    const periodChanges = data?.comparison?.changes ?? null;
+    const priorDays = data?.comparison?.timeSeries.length ?? 0;
+    const comparablePeriods = !!data?.comparison && data.coverage.observedDays === data.coverage.requestedDays
+        && priorDays === data.coverage.requestedDays;
+    const periodChanges = comparablePeriods ? data?.comparison?.changes : null;
+    const trend = useMemo(() => data ? biMetricTrend(data, trendMetric) : [], [data, trendMetric]);
+    const compareTrend = trend.some(point => point.previous !== null);
     const hasData = data && (data.timeSeries.length > 0 || data.channels.length > 0);
     return (<div className="space-y-6">
       {/* Header */}
@@ -92,7 +108,7 @@ function PropertyBI() {
         <div className="flex flex-wrap items-center gap-3">
           <button onClick={() => { setData(null); setSelectedCampaign(null); setCompareEnabled(!compareEnabled); }} className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${compareEnabled
             ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`} title={compareEnabled ? 'Disable period comparison' : 'Enable period comparison'}>
+            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`} aria-pressed={compareEnabled} title={compareEnabled ? 'Disable period comparison' : 'Enable period comparison'}>
             <ArrowLeftRight size={16}/>
             <span className="hidden sm:inline">Compare</span>
           </button>
@@ -160,19 +176,17 @@ function PropertyBI() {
             }
         }} className="ml-2 rounded-lg border bg-background p-2"><option value="all">All accounts</option>{accounts.filter(a => channel === 'all' || a.channel === channel).map(a => <option key={JSON.stringify([a.channel, a.account])} value={JSON.stringify([a.channel, a.account])}>{getMarketingChannelLabel(a.channel)} · {a.account || 'Unattributed historical account'}</option>)}</select></label>
       </div>
-      {data && <section aria-label="Report coverage" className="rounded-xl border border-border bg-card p-4 text-sm"><p>{data.coverage.records} stored records across {data.coverage.observedDays} of {data.coverage.requestedDays} selected dates.</p><p>Missing dates are unknown, not zero. This is coverage of stored records, not proof every provider delivered complete data.</p>{data.coverage.unknownAccountRecords > 0 && <p role="status">{data.coverage.unknownAccountRecords} records still need source-account review.</p>}{!data.coverage.currencyKnown && <p role="status">Some records have unconfirmed currency. Dollar totals and cost-based rates are unavailable.</p>}<details className="mt-2"><summary>Metric definitions and source accounts</summary><p className="mt-2">Conversions are provider-attributed actions. They can be fractional, can overlap across platforms, and do not establish unique people or signed leases. CTR is clicks divided by impressions; CPC is spend divided by clicks; cost per reported conversion is spend divided by conversions. Rates with a zero denominator and changes from a zero baseline are unavailable. Dollar values are USD where confirmed. Dates follow each source account’s reporting calendar.</p><div className="mt-2 max-h-64 overflow-auto">{data.coverage.sources.map(x => <p key={JSON.stringify([x.channel, x.account])}>{getMarketingChannelLabel(x.channel)} · {x.account || 'Unattributed account'} · {x.records} records · {x.firstDate} to {x.lastDate}</p>)}</div></details></section>}
 
 
       {/* Comparison Period Info */}
       {compareEnabled && data?.comparison?.previousPeriod && (<div className="bg-indigo-50/50 border border-indigo-100 rounded-lg px-4 py-2 flex items-center gap-2 text-sm">
           <Calendar size={16} className="text-indigo-500"/>
           <span className="text-indigo-700">
-            Comparing to previous period: {data.comparison.previousPeriod.start} → {data.comparison.previousPeriod.end}
+            Previous period {data.comparison.previousPeriod.start} to {data.comparison.previousPeriod.end}
+            {' · '}{priorDays} of {data.coverage.requestedDays} days with data
+            {!comparablePeriods && ' · Period changes require coverage of every day in both periods'}
           </span>
         </div>)}
-
-      {/* Retained marketing change review */}
-      <AnomalyAlert key={`alerts:${currentProperty.id}`} propertyId={currentProperty.id} report={data}/>
 
       {/* Error State */}
       {error && (<div role="alert" className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
@@ -186,20 +200,41 @@ function PropertyBI() {
 
       {/* Metrics Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard title="Total Spend" value={data?.totals.spend ?? '—'} prefix={data?.totals.spend === null || !data ? '' : '$'} change={compareEnabled && periodChanges?.spend !== null ? periodChanges?.spend : undefined} changeLabel="vs previous period" previousValue={data?.comparison?.totals?.spend ?? undefined} showPrevious={compareEnabled && !!data?.comparison && data.coverage.previousRecords > 0} icon={<DollarSign size={20}/>} loading={loading}/>
-        <MetricCard title="Impressions" value={data?.totals.impressions ?? '—'} change={compareEnabled && periodChanges?.impressions !== null ? periodChanges?.impressions : undefined} changeLabel="vs previous period" previousValue={data?.comparison?.totals?.impressions} showPrevious={compareEnabled && !!data?.comparison && data.coverage.previousRecords > 0} icon={<Eye size={20}/>} loading={loading}/>
-        <MetricCard title="Clicks" value={data?.totals.clicks ?? '—'} change={compareEnabled && periodChanges?.clicks !== null ? periodChanges?.clicks : undefined} changeLabel="vs previous period" previousValue={data?.comparison?.totals?.clicks} showPrevious={compareEnabled && !!data?.comparison && data.coverage.previousRecords > 0} icon={<MousePointerClick size={20}/>} loading={loading}/>
-        <MetricCard title="Conversions" value={data ? formatConversions(data.totals.conversions) : '—'} change={compareEnabled && periodChanges?.conversions !== null ? periodChanges?.conversions : undefined} changeLabel="vs previous period" previousValue={data?.comparison?.totals?.conversions} showPrevious={compareEnabled && !!data?.comparison && data.coverage.previousRecords > 0} icon={<Target size={20}/>} loading={loading}/>
+        <MetricCard title="Total Spend" value={data?.totals.spend ?? '—'} prefix={data?.totals.spend === null || !data ? '' : '$'} change={compareEnabled && periodChanges?.spend !== null ? periodChanges?.spend : undefined} changeLabel="vs previous period" previousValue={data?.comparison?.totals?.spend ?? undefined} showPrevious={comparablePeriods} icon={<DollarSign size={20}/>} loading={loading}/>
+        <MetricCard title="Impressions" value={data?.totals.impressions ?? '—'} change={compareEnabled && periodChanges?.impressions !== null ? periodChanges?.impressions : undefined} changeLabel="vs previous period" previousValue={data?.comparison?.totals?.impressions} showPrevious={comparablePeriods} icon={<Eye size={20}/>} loading={loading}/>
+        <MetricCard title="Clicks" value={data?.totals.clicks ?? '—'} change={compareEnabled && periodChanges?.clicks !== null ? periodChanges?.clicks : undefined} changeLabel="vs previous period" previousValue={data?.comparison?.totals?.clicks} showPrevious={comparablePeriods} icon={<MousePointerClick size={20}/>} loading={loading}/>
+        <MetricCard title="Conversions" value={data ? formatConversions(data.totals.conversions) : '—'} change={compareEnabled && periodChanges?.conversions !== null ? periodChanges?.conversions : undefined} changeLabel="vs previous period" previousValue={data?.comparison?.totals?.conversions} showPrevious={comparablePeriods} icon={<Target size={20}/>} loading={loading}/>
       </div>
 
       {/* Charts Row */}
       {!error && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Time Series Chart */}
           <div className="lg:col-span-2">
-            {hasData ? (<PerformanceChart data={data.timeSeries} lines={[
-                    { key: 'spend', name: 'Spend ($)', color: '#6366f1' },
-                    { key: 'clicks', name: 'Clicks', color: '#10b981' },
-                ]} title="Performance Over Time" loading={loading}/>) : (<div className="bg-white rounded-xl border border-slate-200 p-6">
+            {hasData ? (
+              <PerformanceChart
+                data={trend}
+                lines={[
+                  { key: 'current', name: 'Selected period', color: '#6d28d9' },
+                  ...(compareTrend ? [{ key: 'previous', name: 'Previous period', color: '#64748b', dashed: true }] : []),
+                ]}
+                formatValue={trendMetrics[trendMetric].format}
+                title="Performance over time"
+                controls={
+                  <label className="flex items-center gap-2 text-sm">
+                    <span>Metric</span>
+                    <select
+                      value={trendMetric}
+                      onChange={event => setTrendMetric(event.target.value as keyof BiTotals)}
+                      className="rounded-lg border border-border bg-background px-3 py-2"
+                    >
+                      {Object.entries(trendMetrics).map(([key, metric]) => (
+                        <option key={key} value={key}>{metric.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                }
+              />
+            ) : (<div className="bg-white rounded-xl border border-slate-200 p-6">
                 <h3 className="text-lg font-semibold text-slate-900 mb-6">Performance Over Time</h3>
                 <div className="h-[350px] flex items-center justify-center">
                   {loading ? (<div className="animate-pulse text-slate-400">Loading chart data...</div>) : (<div className="text-center">
@@ -279,19 +314,9 @@ function PropertyBI() {
           </div>
         </div>)}
 
-      {/* Goal Tracking */}
-      {currentProperty?.id && (<GoalTracker key={`goals:${currentProperty.id}`} propertyId={currentProperty.id} reportRange={data?.dateRange} coverageComplete={!!data && data.coverage.observedDays === data.coverage.requestedDays} filtered={channel !== 'all' || account !== 'all'} currentMetrics={{
-                spend: data?.totals.spend,
-                impressions: data?.totals.impressions,
-                clicks: data?.totals.clicks,
-                conversions: data?.totals.conversions,
-                ctr: data?.totals.ctr,
-                cpa: data?.totals.cpa,
-            }}/>)}
-
       {/* Campaign Drill-Down Section */}
       {hasData && (<div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <button onClick={() => setShowCampaigns(!showCampaigns)} className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+          <button type="button" aria-expanded={showCampaigns} onClick={() => setShowCampaigns(!showCampaigns)} className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-indigo-100 rounded-lg">
                 <Table size={20} className="text-indigo-600"/>
@@ -299,7 +324,7 @@ function PropertyBI() {
               <div className="text-left">
                 <h3 className="text-lg font-semibold text-slate-900">Campaign Breakdown</h3>
                 <p className="text-sm text-slate-500">
-                  {campaignsData?.totals.campaigns ?? '—'} campaigns • Click to {showCampaigns ? 'collapse' : 'expand'}
+                  {campaignsData?.totals.campaigns ?? '—'} campaigns
                 </p>
               </div>
             </div>
@@ -313,6 +338,21 @@ function PropertyBI() {
 
       {/* Campaign Detail Drawer */}
       {selectedCampaign && currentProperty && (<CampaignDetailDrawer campaign={selectedCampaign} propertyId={currentProperty.id} startDate={format(dateRange.start, 'yyyy-MM-dd')} endDate={format(dateRange.end, 'yyyy-MM-dd')} storedTrends={selectedTrends} onClose={() => setSelectedCampaign(null)}/>)}
+
+      {data && <section aria-label="Report coverage" className="rounded-xl border border-border bg-card p-4 text-sm"><p>{data.coverage.records} stored records across {data.coverage.observedDays} of {data.coverage.requestedDays} selected dates.</p><p>Missing dates are unknown, not zero. This is coverage of stored records, not proof every provider delivered complete data.</p>{data.coverage.unknownAccountRecords > 0 && <p role="status">{data.coverage.unknownAccountRecords} records still need source-account review.</p>}{!data.coverage.currencyKnown && <p role="status">Some records have unconfirmed currency. Dollar totals and cost-based rates are unavailable.</p>}<details className="mt-2"><summary>Metric definitions and source accounts</summary><p className="mt-2">Conversions are provider-attributed actions. They can be fractional, can overlap across platforms, and do not establish unique people or signed leases. CTR is clicks divided by impressions; CPC is spend divided by clicks; cost per reported conversion is spend divided by conversions. Rates with a zero denominator and changes from a zero baseline are unavailable. Dollar values are USD where confirmed. Dates follow each source account’s reporting calendar.</p><div className="mt-2 max-h-64 overflow-auto">{data.coverage.sources.map(x => <p key={JSON.stringify([x.channel, x.account])}>{getMarketingChannelLabel(x.channel)} · {x.account || 'Unattributed account'} · {x.records} records · {x.firstDate} to {x.lastDate}</p>)}</div></details></section>}
+
+      {/* Retained marketing change review */}
+      <AnomalyAlert key={`alerts:${currentProperty.id}`} propertyId={currentProperty.id} report={data}/>
+
+      {/* Goal Tracking */}
+      {currentProperty?.id && (<GoalTracker key={`goals:${currentProperty.id}`} propertyId={currentProperty.id} reportRange={data?.dateRange} coverageComplete={!!data && data.coverage.observedDays === data.coverage.requestedDays} filtered={channel !== 'all' || account !== 'all'} currentMetrics={{
+                spend: data?.totals.spend,
+                impressions: data?.totals.impressions,
+                clicks: data?.totals.clicks,
+                conversions: data?.totals.conversions,
+                ctr: data?.totals.ctr,
+                cpa: data?.totals.cpa,
+            }}/>)}
 
       <SavedBiReports propertyId={currentProperty.id} report={data}/>
 

@@ -1,3 +1,4 @@
+import { addDays, eachDayOfInterval, format, parseISO } from 'date-fns';
 import { campaignIdentity, formatConversions } from './marketing-fact';
 import { normalizeMarketingChannelId, getMarketingChannelLabel } from './channel-identity';
 import type { BiFilters } from './report-contracts';
@@ -77,10 +78,29 @@ export function buildBiReport(source: BiSource) {
     const current = aggregate(source.currentRows), previous = aggregate(source.previousRows), changes = Object.fromEntries(Object.keys(current.totals).map(key => [key, source.currentRows.length && source.previousRows.length ? reportChange(current.totals[key as keyof BiTotals], previous.totals[key as keyof BiTotals]) : null])) as Record<keyof BiTotals, number | null>;
     const sources = groups(source.currentRows, r => JSON.stringify([normalizeMarketingChannelId(r.channel_id), r.source_account_id])).map(([, rows]) => { const dates = rows.map(r => r.date).sort(); return { channel: normalizeMarketingChannelId(rows[0].channel_id), account: rows[0].source_account_id, records: rows.length, days: new Set(dates).size, firstDate: dates[0], lastDate: dates.at(-1)!, currencyKnown: totals(rows).spend !== null }; });
     const observedDays = new Set(source.currentRows.map(r => r.date)).size, requestedDays = Math.round((Date.parse(source.filters.endDate) - Date.parse(source.filters.startDate)) / 86400000) + 1;
-    return { ...current, dateRange: { start: source.filters.startDate, end: source.filters.endDate }, comparison: source.filters.compare ? { previousPeriod: source.previousPeriod, totals: previous.totals, changes, channelChanges: current.channels.map(c => { const p = previous.channels.find(x => x.channel === c.channel); return { channel: c.channel, ...Object.fromEntries(['spend', 'clicks', 'impressions', 'conversions'].map(k => [k, p ? reportChange(c[k as keyof BiTotals], p[k as keyof BiTotals]) : null])) }; }) } : null, coverage: { records: source.currentRows.length, previousRecords: source.previousRows.length, observedDays, requestedDays, sources, unknownAccountRecords: source.currentRows.filter(r => !r.source_account_id).length, currencyKnown: current.totals.spend !== null }, source, definitionVersion: source.version };
+    return { ...current, dateRange: { start: source.filters.startDate, end: source.filters.endDate }, comparison: source.filters.compare ? { previousPeriod: source.previousPeriod, timeSeries: previous.timeSeries, totals: previous.totals, changes, channelChanges: current.channels.map(c => { const p = previous.channels.find(x => x.channel === c.channel); return { channel: c.channel, ...Object.fromEntries(['spend', 'clicks', 'impressions', 'conversions'].map(k => [k, p ? reportChange(c[k as keyof BiTotals], p[k as keyof BiTotals]) : null])) }; }) } : null, coverage: { records: source.currentRows.length, previousRecords: source.previousRows.length, observedDays, requestedDays, sources, unknownAccountRecords: source.currentRows.filter(r => !r.source_account_id).length, currencyKnown: current.totals.spend !== null }, source, definitionVersion: source.version };
 }
 export type BiReport = ReturnType<typeof buildBiReport>;
 export type BiCampaign = BiReport['campaigns'][number];
+
+export function biMetricTrend(report: BiReport, metric: keyof BiTotals) {
+    const dates = eachDayOfInterval({
+        start: parseISO(report.dateRange.start),
+        end: parseISO(report.dateRange.end),
+    });
+    const current = new Map(report.timeSeries.map(day => [day.date, day[metric]]));
+    const previous = new Map(report.comparison?.timeSeries.map(day => [day.date, day[metric]]));
+    const priorStart = report.comparison?.previousPeriod?.start;
+    return dates.map((day, index) => {
+        const date = format(day, 'yyyy-MM-dd');
+        const previousDate = priorStart ? format(addDays(parseISO(priorStart), index), 'yyyy-MM-dd') : null;
+        return {
+            date,
+            current: current.get(date) ?? null,
+            previous: previousDate ? previous.get(previousDate) ?? null : null,
+        };
+    });
+}
 export function biExportData(report: BiReport, metadata: {
     id: string;
     sourceHash: string;
