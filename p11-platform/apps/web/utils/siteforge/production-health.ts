@@ -5,6 +5,7 @@ import { isIP } from 'node:net'
 import type { Json } from '@/types/supabase'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { requestLaunchRestore } from '@/utils/siteforge/launch/service'
+import { safePublicFetch } from '@/utils/services/safe-public-fetch'
 
 export const SITEFORGE_HEALTH_CHECKS = [
   'dns',
@@ -677,7 +678,14 @@ export async function runSiteForgeHealth(
 
   try {
   await assertPublicHealthTarget(url, options.resolve)
-  const fetcher = options.fetch || fetch
+  // A separate DNS preflight is not sufficient: pin the validated address for
+  // every socket, including linked pages and each same-origin redirect hop.
+  const fetcher: typeof fetch = options.fetch || (async (input, init) => safePublicFetch(String(input), {
+    method: init?.method === 'HEAD' ? 'HEAD' : 'GET',
+    redirect: 'manual',
+    timeoutMs: 15_000,
+    maxBytes: 2_000_000,
+  }))
   let documentPromise:
     | Promise<SiteForgeFetchedDocument>
     | undefined

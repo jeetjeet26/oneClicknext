@@ -7,3 +7,8 @@ python-dotenv==1.2.3
 pydantic==2.13.5
 supabase==2.31.0
 httpx==0.28.1
+
+# Security floors for transitive TLS/ASN.1 dependencies.
+certifi==2026.10.18
+pyasn1==0.6.5
+opentelemetry-api==1.45.1

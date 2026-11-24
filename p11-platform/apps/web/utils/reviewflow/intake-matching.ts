@@ -14,15 +14,17 @@ export function matchSavedGoogleReviews(rows:IntakeRow[],saved:SavedReviewIdenti
   if(seenContent.has(contentKey))throw new IntakeValidationError('Duplicate Google review content appears under multiple source IDs. Review this source before applying.',index+1)
   seenContent.add(contentKey)
   const sameAuthor=existing.filter(r=>name!=='anonymous'&&clean(r.reviewer_name)===name)
+  const sameTextAndRating=(r:SavedReviewIdentity)=>text.length>=40&&text===clean(r.review_text)&&row.rating===r.rating
+  const sameInstant=(r:SavedReviewIdentity)=>Boolean(row.reviewDate&&r.review_date&&Date.parse(row.reviewDate)===Date.parse(r.review_date))
   const candidates=exact.length?exact:existing.filter(r=>{
    const oldText=clean(r.review_text),sameName=name!=='anonymous'&&clean(r.reviewer_name)===name
    const identical=sameName&&text===oldText&&row.rating===r.rating
    const expanded=sameName&&Math.min(text.length,oldText.length)>=80&&(text.startsWith(oldText)||oldText.startsWith(text))
    const sameDate=sameName&&row.reviewDate&&r.review_date&&Date.parse(row.reviewDate)===Date.parse(r.review_date)
    const ratingOnly=sameName&&!text&&!oldText&&row.rating===r.rating
-   return identical||expanded||sameDate||ratingOnly
+   return identical||expanded||sameDate||ratingOnly||(sameTextAndRating(r)&&sameInstant(r))
   })
-  const uncertainAuthor=!exact.length&&existing.some(r=>text.length>=40&&text===clean(r.review_text)&&row.rating===r.rating&&clean(r.reviewer_name)!==name)
+  const uncertainAuthor=!exact.length&&existing.some(r=>sameTextAndRating(r)&&clean(r.reviewer_name)!==name&&!sameInstant(r))
   if(uncertainAuthor||candidates.length>1||(!candidates.length&&sameAuthor.length))throw new IntakeValidationError('Possible existing Google review. Resolve the source identity before importing; no duplicate was added.',index+1)
   const match=candidates[0],id=match?.platform_review_id||row.platformReviewId
   if(seen.has(id))throw new IntakeValidationError('Two Google rows match the same saved review. Review this source before applying.',index+1)

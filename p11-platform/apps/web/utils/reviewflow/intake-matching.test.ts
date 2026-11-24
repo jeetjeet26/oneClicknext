@@ -24,3 +24,9 @@ it('leaves every saved field untouched when an exact ID has changed remotely',()
  expect(matched).toMatchObject({reviewText:old.review_text,rating:old.rating,reviewerName:old.reviewer_name,reviewDate:new Date(old.review_date).toISOString(),reviewerAvatarUrl:old.reviewer_avatar_url})
  expect(matchSavedGoogleReviews([matched],[old])).toEqual([matched])
 })
+
+it('skips a renamed reviewer when long text, rating and posting time all match',()=>{
+ const renamed={...row,reviewerName:'New name',reviewDate:saved.review_date}
+ expect(matchSavedGoogleReviews([renamed],[saved])[0].platformReviewId).toBe(saved.platform_review_id)
+ expect(()=>matchSavedGoogleReviews([{...renamed,reviewDate:'2026-01-01T01:00:00Z'}],[saved])).toThrow(/Possible existing/)
+})

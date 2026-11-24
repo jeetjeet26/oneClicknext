@@ -46,6 +46,8 @@ export async function resolvePublicTarget(input: string) {
 
 export type PublicFetchOptions = {
   timeoutMs?: number; maxBytes?: number; headers?: Record<string, string>; method?: 'GET' | 'HEAD'
+  /** Let a caller enforce a stricter redirect policy before requesting the next URL. */
+  redirect?: 'follow' | 'manual'
 }
 
 export async function safePublicFetch(input: string, options: PublicFetchOptions = {}): Promise<Response> {
@@ -104,7 +106,7 @@ export async function safePublicFetchWithMetadata(input: string, options: Public
       request.on('close', () => clearTimeout(timeout))
       request.end()
     })
-    if (![301,302,303,307,308].includes(response.status)) return { response, finalUrl: current }
+    if (options.redirect === 'manual' || ![301,302,303,307,308].includes(response.status)) return { response, finalUrl: current }
     const location = response.headers.get('location')
     if (!location) return { response, finalUrl: current }
     current = new URL(location, target.url).toString()

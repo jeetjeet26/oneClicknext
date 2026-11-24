@@ -17,3 +17,6 @@ asyncpg>=0.29.0
 # Note: Import from ../shared/
 
 supabase==2.31.0
+
+# Security floor for the transitive CA trust bundle.
+certifi==2026.10.18

@@ -72,6 +72,7 @@ export async function GET(request: NextRequest) {
       `
     let query=(search?supabase.rpc('search_reviewflow_reviews',{p_property_id:propertyId,p_query:search},{count:'exact'}).select(columns):supabase.from('reviews').select(columns,{count:'exact'}))
       .eq('property_id', propertyId)
+      .order('review_date', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false }).order('id',{ascending:false})
       .order('created_at', { referencedTable: 'review_responses', ascending: false })
       .range(offset, offset + limit - 1)
