@@ -1,6 +1,7 @@
 """Meta Graph API client for ads management."""
 import httpx
 import json
+import re
 from typing import Any, Optional, Literal
 from pathlib import Path
 from .config import META_ACCESS_TOKEN, META_BASE_URL, META_AD_ACCOUNT_ID
@@ -139,13 +140,21 @@ class MetaAdsClient:
         })
         return result.get("data", [])
     
-    async def get_daily_campaign_insights(self, account_id: str, date_range: str, reference_time=None) -> dict[str, Any]:
+    async def get_daily_campaign_insights(
+        self, account_id: str, date_range: str, reference_time=None, *, campaign_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Read a complete daily report; an incomplete page sequence is an error."""
         from shared.daily_reports import ReportValidationError, DATE_RANGES, account_id as clean_account, reporting_window
 
         acct = clean_account(account_id, 'meta_ads')
         if date_range not in DATE_RANGES:
             raise ReportValidationError('Unsupported date range')
+        if campaign_ids is not None and (
+            not isinstance(campaign_ids, list) or not 1 <= len(campaign_ids) <= 50
+            or any(not isinstance(value, str) or not re.fullmatch(r'[0-9]{1,30}', value) for value in campaign_ids)
+            or len(set(campaign_ids)) != len(campaign_ids)
+        ):
+            raise ReportValidationError('Meta Ads reporting scope needs a valid campaign ID list')
         account = await self._get(f'/act_{acct}', {
             'fields': 'account_id,currency,timezone_name',
         })
@@ -158,38 +167,54 @@ class MetaAdsClient:
             'fields': 'account_id,account_currency,campaign_id,campaign_name,date_start,date_stop,impressions,clicks,spend,actions',
             'limit': 100,
         }
-        rows, cursors = [], set()
-        while True:
-            # Reuse the known account endpoint; never follow a token-bearing next URL.
-            page = await self._get(f'/act_{acct}/insights', dict(params))
-            if not isinstance(page, dict) or 'error' in page or not isinstance(page.get('data'), list):
-                raise ReportValidationError('Meta daily report page was not confirmed')
-            for row in page['data']:
-                if not isinstance(row, dict):
-                    raise ReportValidationError('Meta daily report contains an invalid row')
-                rows.append({
-                    'account_id': row.get('account_id'), 'currency': row.get('account_currency'),
-                    'date': row.get('date_start'), 'date_stop': row.get('date_stop'),
-                    'campaign_id': row.get('campaign_id'), 'campaign_name': row.get('campaign_name'),
-                    'spend': row.get('spend'), 'impressions': row.get('impressions'),
-                    'clicks': row.get('clicks'), 'actions': row.get('actions', []),
-                })
-            paging = page.get('paging', {})
-            if len(rows) > 50_000 or len(cursors) >= 500:
-                raise ReportValidationError('Daily report exceeds the bounded import capacity')
-            if not isinstance(paging, dict):
-                raise ReportValidationError('Meta daily report pagination was not confirmed')
-            if not paging.get('next'):
-                break
-            cursor_data = paging.get('cursors', {})
-            after = cursor_data.get('after') if isinstance(cursor_data, dict) else None
-            if not isinstance(after, str) or not after or after in cursors:
-                raise ReportValidationError('Meta daily report pagination did not advance')
-            cursors.add(after)
-            params['after'] = after
+        reports = []
+        if campaign_ids is None:
+            reports.append((f'/act_{acct}/insights', None))
+        else:
+            for campaign_id in campaign_ids:
+                campaign = await self._get(f'/{campaign_id}', {'fields': 'id,account_id'})
+                if not isinstance(campaign, dict) or campaign.get('id') != campaign_id or campaign.get('account_id') != acct:
+                    raise ReportValidationError('A configured Meta campaign could not be verified in this ad account')
+                reports.append((f'/{campaign_id}/insights', campaign_id))
+
+        rows, pages = [], 0
+        for endpoint, campaign_id in reports:
+            report_params = dict(params)
+            cursors = set()
+            while True:
+                # Keep the token on the verified endpoint through pagination.
+                page = await self._get(endpoint, dict(report_params))
+                pages += 1
+                if not isinstance(page, dict) or 'error' in page or not isinstance(page.get('data'), list):
+                    raise ReportValidationError('Meta daily report page was not confirmed')
+                for row in page['data']:
+                    if not isinstance(row, dict):
+                        raise ReportValidationError('Meta daily report contains an invalid row')
+                    if campaign_id is not None and row.get('campaign_id') != campaign_id:
+                        raise ReportValidationError('Meta returned a campaign outside the property reporting scope')
+                    rows.append({
+                        'account_id': row.get('account_id'), 'currency': row.get('account_currency'),
+                        'date': row.get('date_start'), 'date_stop': row.get('date_stop'),
+                        'campaign_id': row.get('campaign_id'), 'campaign_name': row.get('campaign_name'),
+                        'spend': row.get('spend'), 'impressions': row.get('impressions'),
+                        'clicks': row.get('clicks'), 'actions': row.get('actions', []),
+                    })
+                if len(rows) > 50_000 or pages > 500:
+                    raise ReportValidationError('Daily report exceeds the bounded import capacity')
+                paging = page.get('paging', {})
+                if not isinstance(paging, dict):
+                    raise ReportValidationError('Meta daily report pagination was not confirmed')
+                if not paging.get('next'):
+                    break
+                cursor_data = paging.get('cursors', {})
+                after = cursor_data.get('after') if isinstance(cursor_data, dict) else None
+                if not isinstance(after, str) or not after or after in cursors:
+                    raise ReportValidationError('Meta daily report pagination did not advance')
+                cursors.add(after)
+                report_params['after'] = after
         return {'account_id': acct, 'currency': account.get('currency'),
                 'timezone': account.get('timezone_name'), 'start_date': start, 'end_date': end, 'rows': rows,
-                'pagination_complete': True, 'pages': len(cursors) + 1}
+                'pagination_complete': True, 'pages': pages}
 
     # ========== ADSET MANAGEMENT ==========
     
