@@ -25,7 +25,7 @@ export async function acquirePublicSource(url: string): Promise<SourceReceipt> {
     status: 'uncertain', requestedUrl: url, transport: 'public_http_v1', fetchedAt: new Date().toISOString(),
   }
   try {
-    const { response, finalUrl } = await safePublicFetchWithMetadata(url, { timeoutMs: 25000, maxBytes: 1_000_000, headers: { accept: 'text/html, application/xhtml+xml, text/plain' } })
+    const { response, finalUrl } = await safePublicFetchWithMetadata(url, { timeoutMs: 25000, headers: { accept: 'text/html, application/xhtml+xml, text/plain' } })
     receipt.fetchedAt = new Date().toISOString()
     receipt.finalUrl = finalUrl
     receipt.statusCode = response.status
