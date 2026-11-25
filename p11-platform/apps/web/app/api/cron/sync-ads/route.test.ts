@@ -7,8 +7,8 @@ vi.mock('@/utils/services/cron-job-runs', async importOriginal => ({
   ...await importOriginal<typeof import('@/utils/services/cron-job-runs')>(),
   startCronJobRun: mocks.start, finishCronJobRun: mocks.finish,
 }))
-vi.mock('@/app/api/integrations/google-ads/sync/route', () => ({ syncGoogleAdsConnection: mocks.google }))
-vi.mock('@/app/api/integrations/meta-ads/sync/route', () => ({ syncMetaAdsConnection: mocks.meta }))
+vi.mock('@/app/api/integrations/google-ads/sync/queue', () => ({ syncGoogleAdsConnection: mocks.google }))
+vi.mock('@/app/api/integrations/meta-ads/sync/queue', () => ({ syncMetaAdsConnection: mocks.meta }))
 vi.mock('@/utils/services/shared-executor', () => ({ runSharedExecutorJob: mocks.executor }))
 import { GET } from './route'
 

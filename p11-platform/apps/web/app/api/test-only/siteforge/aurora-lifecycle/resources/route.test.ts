@@ -21,7 +21,7 @@ vi.mock('@/utils/siteforge/testing/aurora-lifecycle-control', async () => {
 
 describe('Aurora lifecycle resource mutation contract', () => {
   it('counts governed extension requests as custom interaction coverage', async () => {
-    const { deriveAuroraSemanticCoverage } = await import('./route')
+    const { deriveAuroraSemanticCoverage } = await import('./handlers')
 
     expect(
       deriveAuroraSemanticCoverage(

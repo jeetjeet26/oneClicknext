@@ -52,6 +52,7 @@ const nextConfig: NextConfig = {
   ],
   outputFileTracingIncludes: {
     "/api/knowledge/files": ["./runtime-assets/knowledge-pdf-worker.cjs", "./node_modules/unpdf/**/*"],
+    "/.well-known/workflow/v1/flow": ["./runtime-assets/*"],
     "/.well-known/workflow/v1/step": ["./runtime-assets/*"],
     "/api/siteforge/browser-certifier": [
       "./node_modules/playwright-core/**/*",

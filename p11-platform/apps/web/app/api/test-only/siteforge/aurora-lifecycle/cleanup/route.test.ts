@@ -89,7 +89,7 @@ describe('Aurora lifecycle cleanup route', () => {
 
   it('deletes deployments linked to owned artifacts before artifact removal', async () => {
     const removeDeployments = vi.fn().mockResolvedValue({ error: null })
-    const { deleteOwnedArtifactDeployments } = await import('./route')
+    const { deleteOwnedArtifactDeployments } = await import('./handlers')
 
     await deleteOwnedArtifactDeployments(
       removeDeployments,
@@ -110,7 +110,7 @@ describe('Aurora lifecycle cleanup route', () => {
   })
 
   it('removes only overlays unreferenced by retained artifacts', async () => {
-    const { selectUnreferencedAuroraOverlays } = await import('./route')
+    const { selectUnreferencedAuroraOverlays } = await import('./handlers')
 
     expect(
       selectUnreferencedAuroraOverlays(

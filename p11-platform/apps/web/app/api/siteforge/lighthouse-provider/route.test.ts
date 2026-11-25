@@ -10,10 +10,8 @@ vi.mock("node:dns/promises", () => ({
   lookup: lookupMock,
 }));
 
-import {
-  POST,
-  resetLighthouseProviderRateLimitForTests,
-} from "./route";
+import { POST } from "./route";
+import { resetLighthouseProviderRateLimitForTests } from "./handlers";
 
 const SECRET = "lighthouse-provider-secret-that-is-long-enough";
 const artifact = {

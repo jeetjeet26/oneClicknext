@@ -115,6 +115,6 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export function inviteUrlFromToken(token: string) {
+function inviteUrlFromToken(token: string) {
   return buildExternalIntegrationLink(token)
 }

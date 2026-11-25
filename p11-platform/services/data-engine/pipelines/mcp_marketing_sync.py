@@ -234,6 +234,24 @@ class MCPMarketingSync:
             return self._build_channel_result('google_ads', 'failed', [],
                 'Google Ads daily report could not be verified. Check account access, dates, pagination, USD currency and report values before retrying.')
 
+    def _meta_campaign_ids(self, property_id: str, account_id: str) -> list[str] | None:
+        from shared.daily_reports import ReportValidationError
+
+        result = self.supabase.table('ad_account_connections').select('platform_metadata').eq(
+            'property_id', property_id
+        ).eq('platform', 'meta_ads').eq('account_id', account_id).eq('is_active', True).execute()
+        if not isinstance(result.data, list) or len(result.data) != 1:
+            raise ReportValidationError('Meta Ads account is no longer linked to this property')
+
+        metadata = result.data[0].get('platform_metadata')
+        if metadata is None:
+            return None
+        if not isinstance(metadata, dict):
+            raise ReportValidationError('Meta Ads reporting scope is invalid')
+        if 'campaign_ids' not in metadata:
+            return None
+        return metadata['campaign_ids'] if metadata['campaign_ids'] is not None else []
+
     async def _sync_meta_ads(self, property_id: str, account_id: str, date_range: str) -> Dict[str, Any]:
         """Read all Meta pages at daily grain; never substitute a period-end date."""
         from pipelines.marketing_report import report_records
@@ -242,7 +260,11 @@ class MCPMarketingSync:
             MetaAdsClient = _get_meta_ads_client()
             if not MetaAdsClient:
                 return self._build_channel_result('meta_ads', 'skipped', [], 'Meta Ads client not available')
-            report = await MetaAdsClient().get_daily_campaign_insights(account_id=account_id, date_range=date_range, **({'reference_time': self.reference_time} if self.reference_time is not None else {}))
+            campaign_ids = await asyncio.to_thread(self._meta_campaign_ids, property_id, account_id)
+            report = await MetaAdsClient().get_daily_campaign_insights(
+                account_id=account_id, date_range=date_range, reference_time=self.reference_time,
+                campaign_ids=campaign_ids,
+            )
             records = report_records(report, property_id, 'meta_ads', account_id)
             return {**self._build_channel_result('meta_ads', 'succeeded', records),
                     'receipt': self._coverage_receipt(report, 'meta_ads', len(records))}

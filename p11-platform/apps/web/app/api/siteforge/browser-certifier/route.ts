@@ -53,7 +53,7 @@ function secretDigest(value: string): Buffer {
   return createHash("sha256").update(value).digest();
 }
 
-export function hasValidBrowserCertifierAuthorization(
+function hasValidBrowserCertifierAuthorization(
   authorization: string | null,
   expectedSecret: string | undefined,
 ): boolean {

@@ -6,7 +6,7 @@ import {
 } from "@/utils/client-portal/server";
 import { portalQuery } from "@/utils/client-portal/contracts";
 export const runtime = "nodejs";
-export const headers = {
+const headers = {
   "Cache-Control": "private, no-store",
   "Referrer-Policy": "no-referrer",
 };

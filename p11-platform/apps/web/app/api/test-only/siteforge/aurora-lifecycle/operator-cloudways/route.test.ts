@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { operatorToolSecretMatches } from './route'
+import { operatorToolSecretMatches } from './handlers'
 
 describe('Aurora operator Cloudways tool gating', () => {
   const secret = 'a'.repeat(48)

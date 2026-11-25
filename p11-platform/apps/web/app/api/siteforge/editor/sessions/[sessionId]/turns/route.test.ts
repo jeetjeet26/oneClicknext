@@ -108,7 +108,7 @@ describe('semantic editor turn route', () => {
   })
 
   it('accepts structured page actions without a separate scope authorization', async () => {
-    const { turnSchema } = await import('./route')
+    const { turnSchema } = await import('./turn-schema')
     const result = turnSchema.safeParse({
       userIntent: 'Remove a page.',
       expectedArtifactId: '22222222-2222-4222-8222-222222222222',
@@ -143,7 +143,9 @@ describe('semantic editor turn route', () => {
     expect(source).toContain(
       'Another semantic edit is already active for this website'
     )
-    expect(source).toContain('siteForgePageManagerActionSchema')
+    expect(source).toContain('turnSchema.safeParse')
+    const schema = await readFile(new URL('./turn-schema.ts', import.meta.url), 'utf8')
+    expect(schema).toContain('siteForgePageManagerActionSchema')
     expect(source).toContain('pageManagerAction: parsed.data.pageManagerAction')
     expect(source).toContain('editScope: effectiveEditScope')
     expect(source).toContain('pageManagerActionSummary')

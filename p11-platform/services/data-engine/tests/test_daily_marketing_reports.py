@@ -176,6 +176,38 @@ def test_meta_follows_cursors_on_same_account_and_explicit_daily_dates(monkeypat
     assert report_records(result, PROPERTY, 'meta_ads', ACCOUNT)[-1]['spend'] == 5.5
 
 
+@pytest.mark.parametrize('returned_campaign', ['100', '200'])
+def test_shared_meta_account_reads_only_verified_property_campaign(monkeypatch, returned_campaign):
+    client = MetaAdsClient(access_token='fixture-only', account_id=ACCOUNT)
+    get = AsyncMock(side_effect=[
+        {'account_id': ACCOUNT, 'currency': 'USD', 'timezone_name': 'UTC'},
+        {'id': '100', 'account_id': ACCOUNT},
+        {'data': [meta_row(campaign=returned_campaign)]},
+    ])
+    monkeypatch.setattr(client, '_get', get)
+
+    scope = client.get_daily_campaign_insights(ACCOUNT, 'LAST_7_DAYS', campaign_ids=['100'])
+    if returned_campaign == '100':
+        assert [row['campaign_id'] for row in asyncio.run(scope)['rows']] == ['100']
+    else:
+        with pytest.raises(daily.ReportValidationError, match='outside the property reporting scope'):
+            asyncio.run(scope)
+    assert [call.args[0] for call in get.await_args_list] == [f'/act_{ACCOUNT}', '/100', '/100/insights']
+
+
+def test_configured_empty_meta_scope_never_falls_back_to_account_report(db, monkeypatch):
+    client = MetaAdsClient(access_token='fixture-only', account_id=ACCOUNT)
+    get = AsyncMock()
+    monkeypatch.setattr(client, '_get', get)
+    monkeypatch.setattr(pipeline, '_get_meta_ads_client', lambda: lambda: client)
+    connection = db.rows['ad_account_connections'][1]
+    connection.update(account_id=ACCOUNT, platform_metadata={'campaign_ids': []})
+
+    result = asyncio.run(pipeline.MCPMarketingSync()._sync_meta_ads(PROPERTY, ACCOUNT, 'LAST_7_DAYS'))
+    assert result['state'] == 'failed' and result['records'] == []
+    get.assert_not_awaited()
+
+
 @pytest.mark.parametrize('pages', [
     [{'data': []}, {'data': None}],
     [{'data': [], 'paging': {'next': 'next'}}],

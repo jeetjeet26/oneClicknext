@@ -1,4 +1,4 @@
-// schema_migration_version: 20261124175905
+// schema_migration_version: 20261125043733
 export type Json =
   | string
   | number
@@ -42826,6 +42826,10 @@ export type Database = {
           p_property_id: string
           p_request_id?: string
         }
+        Returns: Json
+      }
+      read_marketvision_sale_sources: {
+        Args: { p_actor_id: string; p_property_id: string }
         Returns: Json
       }
       read_marketvision_sources: {

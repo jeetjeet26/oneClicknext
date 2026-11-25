@@ -217,7 +217,7 @@ describe('semantic editor session route', () => {
         }),
       },
     }
-    const { loadExtensionReview } = await import('./route')
+    const { loadExtensionReview } = await import('./extension-review')
     const review = await loadExtensionReview(
       extension,
       website,

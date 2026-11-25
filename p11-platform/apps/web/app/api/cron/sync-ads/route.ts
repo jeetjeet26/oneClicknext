@@ -12,8 +12,8 @@ import {
   hasValidCronAuth,
 } from '@/utils/services/api-helpers'
 import { cronStatusFromOutcomes, finishCronJobRun, startCronJobRun } from '@/utils/services/cron-job-runs'
-import { syncGoogleAdsConnection } from '@/app/api/integrations/google-ads/sync/route'
-import { syncMetaAdsConnection } from '@/app/api/integrations/meta-ads/sync/route'
+import { syncGoogleAdsConnection } from '@/app/api/integrations/google-ads/sync/queue'
+import { syncMetaAdsConnection } from '@/app/api/integrations/meta-ads/sync/queue'
 import { createRequestContext } from '@/utils/services/request-context'
 import { runSharedExecutorJob } from '@/utils/services/shared-executor'
 

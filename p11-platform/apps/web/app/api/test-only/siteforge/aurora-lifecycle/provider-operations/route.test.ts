@@ -21,7 +21,7 @@ vi.mock('@/utils/siteforge/testing/aurora-lifecycle-control', async () => {
 
 describe('Aurora provider operation contract', () => {
   it('bounds destructive provider ownership to fifteen minutes', async () => {
-    const { boundedProviderLeaseExpiry } = await import('./route')
+    const { boundedProviderLeaseExpiry } = await import('./handlers')
     expect(
       boundedProviderLeaseExpiry(
         '2026-08-05T18:00:00.000Z',
