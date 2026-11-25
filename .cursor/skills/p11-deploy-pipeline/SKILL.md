@@ -9,7 +9,7 @@ Use GitHub `jeetjeet26/oneClicknext` and its `main` branch as the single release
 
 ## Check access from the current session first
 
-Run fresh, read-only probes at the start of release work using the same shell that would deploy. An earlier failure or a connector error does not establish that the CLI is unavailable now.
+Run fresh, read-only probes at the start of release work using the same shell that would deploy. Use the actual authenticated CLI results to choose the deployment path. The CLI and HTTPS can succeed through the configured proxy while raw DNS probes fail. An earlier failure or a connector error does not establish that the CLI is unavailable now.
 
 ```bash
 GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code origin refs/heads/main
@@ -27,7 +27,7 @@ vercel --scope jeetjeet26s-projects inspect hellop11.com
 1. Confirm `origin` is `jeetjeet26/oneClicknext`, record the remote `main` SHA, and inspect local status. Record the current deployment IDs and revisions for affected services so rollback is unambiguous.
 2. Prepare the change on top of remote `main`. Use a clean isolated checkout when the working copy contains unrelated edits or is behind. Keep that work intact. Keep routine work and releases on `main` without feature branches or pull requests. Never force-push or ship a dirty checkout.
 3. Test affected surfaces before advancing `main`. Run a production web build for web changes. For schema changes, verify the live Supabase contract and run the web schema checks. For Data Engine changes, test the affected Python paths, including campaign scope and import recovery when relevant.
-4. Re-read remote `main` before updating it. When Git transport works, fast-forward it with `git push origin HEAD:refs/heads/main` from the reviewed checkout. If the remote advanced, reconcile with the new head and retest. Re-read remote `main` after the push.
+4. Re-read remote `main` before updating it. When Git transport works, fast-forward it with `git push origin HEAD:refs/heads/main` from the reviewed checkout. If the remote advanced or Git rejects a non-fast-forward push, stop the release. Fetch the new head, reconcile the intended changes without discarding remote work, and retest before another normal push. Re-read remote `main` after the push and confirm it matches the tested release.
 5. Deploy only affected runtime components. Include shared build inputs and dependencies in the comparison. A documentation-only commit can advance `main` without a redeploy. Report the current GitHub head and live release revisions accurately in that case. Keep production domain assignment and Data Engine deploys manual.
 
 When Git transport cannot reach GitHub, use the GitHub connector. Verify the base ref, preserve file modes and the exact tested tree, perform a non-force update, and re-read the ref. A Vercel CLI upload can show a different local commit from remote `main`. Accept it only after verifying identical Git tree hashes and recording the remote release SHA and deployment ID.
@@ -38,7 +38,8 @@ When Git transport cannot reach GitHub, use the GitHub connector. Verify the bas
 2. In the clean release checkout, ensure the approved, checksum-matching ACF Pro archive is available at `p11-platform/apps/web/runtime-assets/advanced-custom-fields-pro.zip`. Keep the archive private and out of Git. Run `npm --prefix p11-platform/apps/web run siteforge:deployment-assets:verify`. When Node or dependencies differ, use the repository's declared versions and lockfile.
 3. Run `bash p11-platform/apps/web/scripts/stage-production-release.sh` from the linked checkout of `main`. The script validates remote `main` and stages with `--prod --skip-domain --archive tgz` and release metadata. It uploads from the repository root and passes the web app's Vercel config. The repository-root upload includes SiteForge's shared WordPress build inputs while Vercel builds from the configured web app directory.
 4. Wait for **Ready** on the exact staged production deployment. Check build output, the staged URL, and the affected routes. Confirm protected routes handle sign-in correctly. Use an authorized session for authenticated checks. When staging auth is unavailable, report the gap and run any remaining checks immediately after promotion if the checks completed before promotion satisfy the release requirements.
-5. Promote that same staged production deployment from its details page or with `vercel promote <deployment>`. Verify hellop11.com points to it in Vercel and rerun the affected flows on the production domain. Use the recorded previous deployment for rollback if a release regression warrants it.
+5. If the staged build fails or does not pass qualification, stop before promotion. Verify that hellop11.com still points to the recorded previous deployment. Diagnose the failure, qualify the fix, and stage a verified candidate.
+6. Promote that same staged production deployment from its details page or with `vercel promote <deployment>`. Verify hellop11.com points to it in Vercel and rerun the affected flows on the production domain. Use the recorded previous deployment for rollback if a release regression warrants it.
 
 For an already verified, tree-identical checkout when the checked-in staging script cannot run, use the same upload with the confirmed checkout path and remote `main` SHA. Verify the private runtime assets and linked project first.
 
@@ -54,7 +55,7 @@ vercel --cwd "$release_checkout" \
 
 Keep the existing Render service linked to GitHub `main` with automatic deploys off. Confirm the current service, target commit, previous live deploy, and recent ingestion evidence before rolling out an import change. Use **Manual Deploy → Deploy a specific commit** and select the full verified `main` SHA. If using the Render CLI, specify the full SHA with `render deploys create <service-id> --commit <sha>` and confirm the selected workspace and service. A tool that deploys only the latest linked-branch commit is safe only after verifying that branch and commit.
 
-Wait for Render to report the exact commit **Live**, check `/health`, and check the affected flow or its latest routine job results. Leave unrelated services outside the release. Keep existing environment variables and credentials unless the change requires an authorized configuration update.
+Wait for Render to report the exact commit **Live**, check `/health`, and check the affected flow or its latest routine job results. If a build or rollout fails, verify which deployment is live and healthy before retrying. Use the recorded previous deployment for rollback if a live regression warrants it. Leave unrelated services outside the release. Keep existing environment variables and credentials unless the change requires an authorized configuration update.
 
 ## Supabase and product defaults
 
@@ -66,4 +67,4 @@ For Meta and Google Ads, create authorized account links active and include them
 
 ## Close the release
 
-Report the verified GitHub SHA, production deployment link and status for each affected service, the relevant smoke checks, and any migration or rollback. If a step is blocked, say which one and what evidence establishes the blocker. Preserve the verified live deployment when qualification fails.
+Confirm the production target and release revision of each affected service before declaring a release complete. Report the verified GitHub SHA, live deployment links and statuses, relevant smoke checks, and any migration or rollback. If a step is blocked, say which one and what evidence establishes the blocker. Preserve the verified live deployment when qualification fails.
