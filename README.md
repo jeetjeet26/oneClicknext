@@ -191,10 +191,10 @@ oneClick/
 
 ## Production releases
 
-Merge changes into `main` and release from the current GitHub `main` commit. Feature branches are for development and review.
+Use GitHub `main` as the single release branch and fast-forward it from a clean, tested checkout. Follow the [P11 release skill](.cursor/skills/p11-deploy-pipeline/SKILL.md) for CLI preflight, device login recovery, and deploy verification.
 
-- **Console.** In a clean checkout of `main`, install web dependencies and place the approved ACF Pro zip at `p11-platform/apps/web/runtime-assets/advanced-custom-fields-pro.zip`. Link the checkout to the existing Vercel `web` project and run `bash p11-platform/apps/web/scripts/stage-production-release.sh` from the repository root. The script verifies the checkout and runtime assets and stages a production deployment. Check the generated deployment, then promote it to `hellop11.com`. The licensed zip stays out of Git.
-- **Render.** For a data-engine or Community Brain worker release, trigger a manual deploy from the service’s linked `main` branch. Confirm the live commit matches the release and check the service health.
+- **Console.** Verify CLI access to the existing Vercel `web` project. Run `bash p11-platform/apps/web/scripts/stage-production-release.sh` from a linked, clean checkout of `main` with the approved private SiteForge runtime archive. Verify the staged build, promote it to `hellop11.com`, and check the live alias.
+- **Render.** Manually deploy the verified `main` SHA to the affected service. Confirm the live revision and service health.
 
 ## 🚀 Quick Start
 

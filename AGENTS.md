@@ -4,7 +4,7 @@ Read [the P11 release skill](.cursor/skills/p11-deploy-pipeline/SKILL.md) before
 
 ## Release policy
 
-Use GitHub `main` as the single release branch. Use a clean checkout and ordinary fast-forward updates. Keep unrelated local work intact. Stage production builds for verification before assigning hellop11.com.
+Use GitHub `main` as the single release branch. Use a clean checkout and ordinary fast-forward updates. Keep unrelated local work intact. Check Vercel CLI access from the current session before requesting device authorization or a Terminal handoff. Stage production builds for verification before assigning hellop11.com.
 
 ## Community product defaults
 
