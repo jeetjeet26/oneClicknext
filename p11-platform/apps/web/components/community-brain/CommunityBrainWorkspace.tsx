@@ -10,6 +10,9 @@ import {CommunityReconciliation} from './CommunityReconciliation'
 import {createClient} from '@/utils/supabase/client'
 import {WorkspaceDisclosure} from '@/components/ui/WorkspaceSection'
 import {intakeAccept,intakeFormat} from '@/utils/community-brain/formats'
+import {getMarketingChannelLabel} from '@/utils/analytics/channel-identity'
+import {formatConversions} from '@/utils/analytics/marketing-fact'
+import {metricCurrency,metricPercent,type BiReport} from '@/utils/analytics/report-data'
 
 type Community={id:string;name:string;capabilities:string[]}
 type Row=Record<string,unknown>
@@ -58,6 +61,7 @@ export function CommunityBrainWorkspace({propertyId,propertyName,portfolio=false
     </div>
    </form>
    {result&&<section aria-live="polite" className="space-y-5"><div><h2 className="text-xl font-semibold">Results</h2><p className="text-sm text-muted-foreground">Showing {result.coverage.returned} of {result.coverage.selected} selected communities. {result.coverage.unavailable>0&&`${result.coverage.unavailable} sources unavailable.`}</p></div>
+    {result.operation==='campaigns'&&['analysis_unverified','no_usable_answer'].includes(result.modelState)&&<p className="rounded-xl border p-4 text-sm">The assistant couldn’t verify its written analysis. The campaign breakdown below uses the saved report.</p>}
     {result.answer&&<article className="space-y-3 rounded-xl border p-5"><p className="whitespace-pre-wrap">{result.answer.summary}</p>{result.answer.insights.map((insight,i)=><div key={i}><p>{insight.observation}</p><p className="text-xs text-muted-foreground">{insight.communityIds.map(id=>communities.find(c=>c.id===id)?.name).join(' · ')}{insight.sourceIds?.map(id=>{const source=result.groups.flatMap(g=>(g.data.sources??[]) as Array<{id:string;title:string;date:string|null}>).find(s=>s.id===id);return source?<span className="block" key={id}>Source: {source.title} · {source.date??'See dated records below; source date may be unknown'}</span>:null})}</p></div>)}{!!result.answer.missingData?.length&&<div><h3 className="font-medium">Missing data and limitations</h3><ul className="list-disc pl-5">{result.answer.missingData.map((v,i)=><li key={i}>{v}</li>)}</ul></div>}{result.answer.recommendations.length>0&&<div><h3 className="font-medium">Suggestions for review</h3><ul className="mt-2 list-disc space-y-1 pl-5">{result.answer.recommendations.map((v,i)=><li key={i}>{v}</li>)}</ul></div>}</article>}
     {result.modelState==='evidence_too_large_select_fewer_communities'&&<p>These sources exceed the analysis budget. Select fewer communities; no sources have been silently dropped.</p>}{result.groups.map(g=><div key={`sources:${g.propertyId}`}>{((g.data.sources??[]) as Array<{id:string;title:string;date:string|null;content:unknown}>).map(s=><details key={s.id} className="rounded-lg border p-3"><summary>{s.title} · {s.date??'Dates and provenance in source record'}</summary><pre className="mt-2 whitespace-pre-wrap break-words text-xs">{JSON.stringify(s.content,null,2)}</pre></details>)}</div>)}{result.modelState==='model_not_configured' &&<p className="text-sm">The language model is not configured. Verified source results remain available below.</p>}
     {['floorplans','assets'].includes(result.operation)&&<button className={button} disabled={busy} onClick={()=>void downloadBundle()}>Download this page’s exact files</button>}{result.groups.map(group=><article key={group.propertyId} className="rounded-xl border bg-card p-5"><h3 className="text-lg font-semibold">{group.name}</h3>{group.state!=='ready'?<p className="mt-2 text-sm">The source is unavailable. No values have been inferred.</p>:<EvidenceCards operation={result.operation} data={group.data}/>}</article>)}
@@ -96,7 +100,32 @@ export function CommunityBrainWorkspace({propertyId,propertyName,portfolio=false
 }
 function EvidenceCards({operation,data}:{operation:string;data:Row}){
  if(operation==='floorplans'||operation==='assets'){const items=(data.items??[]) as Row[];return <div className="mt-4 grid gap-3 sm:grid-cols-2">{items.length?items.map(item=><div key={String(item.id)} className="rounded-lg border p-3"><p className="font-medium">{String(item.name)}</p>{operation==='floorplans'&&<p className="text-sm text-muted-foreground">{String(item.bedrooms??'Unknown')} beds · {String(item.bathrooms??'Unknown')} baths · {String(item.sqft_min??'Unknown')}–{String(item.sqft_max??'Unknown')} sq ft</p>}<p className="text-xs text-muted-foreground">{String(item.review_status??item.approval_status??'')} · source revision {String(item.source_revision??'unlinked')}{item.original_page?` · page ${item.original_page}`:''}</p>{typeof item.downloadUrl==='string'?<a className="mt-2 inline-block text-sm underline" href={item.downloadUrl}>Download exact file</a>:<p className="mt-2 text-sm">No verified drawing is linked. Review the community original.</p>}</div>):<p className="text-sm">No matching records are available.</p>}{data.nextOffset!==null&&<p className="text-sm">Additional assets are available. Narrow the community selection or use the community library.</p>}</div>}
- if(operation==='campaigns'){const totals=data.totals as Row|null,coverage=data.coverage as Row;return <div className="mt-3 space-y-3">{totals?<dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">{[['spend','Confirmed USD spend'],['impressions','Impressions'],['clicks','Clicks'],['conversions','Reported conversions']].map(([key,label])=><div key={key}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="text-lg font-medium">{totals[key]===null?'Unavailable':Number(totals[key]).toLocaleString(undefined,{maximumFractionDigits:2})}</dd></div>)}</dl>:<p>No usable observations for this period.</p>}<p className="text-sm">{String(coverage?.observedDays??0)} observed days of {String(coverage?.requestedDays??0)} requested. Provider report coverage: {String(data.providerCoverage??'unconfirmed')}.</p><p className="text-sm text-muted-foreground">Conversions are attributed actions, not verified leases. Missing values and dates are not zero.</p></div>}
+ if(operation==='campaigns'){
+  const totals=data.totals as Row|null,coverage=data.coverage as Row
+  const channels=(data.channels??[]) as Array<BiReport['channels'][number]&{observedDays?:number}>
+  return <div className="mt-3 space-y-3">
+   {totals?<dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">{[['spend','Confirmed USD spend'],['impressions','Impressions'],['clicks','Clicks'],['conversions','Reported conversions']].map(([key,label])=><div key={key}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="text-lg font-medium">{totals[key]===null?'Unavailable':Number(totals[key]).toLocaleString(undefined,{maximumFractionDigits:2})}</dd></div>)}</dl>:<p>No usable observations for this period.</p>}
+   {channels.length>0&&<div className="overflow-x-auto">
+    <table className="w-full text-left text-sm">
+     <caption className="mb-2 text-left font-medium">Performance by channel</caption>
+     <thead><tr className="border-b text-xs text-muted-foreground">{['Channel','Observed days','Impressions','Clicks','USD spend','Reported conversions','CTR','CPC','CPA'].map(label=><th key={label} scope="col" className="px-2 py-2 font-medium">{label}</th>)}</tr></thead>
+     <tbody>{channels.map(channel=><tr key={channel.channel} className="border-b">
+      <th scope="row" className="px-2 py-2 font-medium">{getMarketingChannelLabel(channel.channel)}</th>
+      <td className="px-2 py-2">{channel.observedDays??'Unavailable'}</td>
+      <td className="px-2 py-2">{channel.impressions.toLocaleString()}</td>
+      <td className="px-2 py-2">{channel.clicks.toLocaleString()}</td>
+      <td className="px-2 py-2">{metricCurrency(channel.spend)}</td>
+      <td className="px-2 py-2">{formatConversions(channel.conversions)}</td>
+      <td className="px-2 py-2">{metricPercent(channel.ctr)}</td>
+      <td className="px-2 py-2">{metricCurrency(channel.cpc)}</td>
+      <td className="px-2 py-2">{metricCurrency(channel.cpa)}</td>
+     </tr>)}</tbody>
+    </table>
+   </div>}
+   <p className="text-sm">{String(coverage?.observedDays??0)} observed days of {String(coverage?.requestedDays??0)} requested. Provider report coverage is {String(data.providerCoverage??'unconfirmed')}.</p>
+   <p className="text-sm text-muted-foreground">Each platform reports conversions according to its own attribution rules. Totals reflect the days with saved observations.</p>
+  </div>
+ }
  const competitors=(data.competitors??[]) as Array<{id:string;name:string}>
  const canonical=data.canonical as {facts?:Array<{id:string;key:string;payload:Row}>}|undefined,evidence=data.evidence as Array<{id:string;content:string;authority:string}>|undefined
  return <div className="mt-3 space-y-3">{!!competitors.length&&<div><p className="font-medium">Saved competitors</p><ul className="list-disc pl-5">{competitors.map(c=><li key={c.id}>{c.name}</li>)}</ul></div>}{canonical?.facts?.map(f=><p key={f.id}><strong>{f.key}: </strong>{String(f.payload.value??'Reviewed fact')}</p>)}{evidence?.map(e=><details key={e.id}><summary className="text-sm">{e.authority} evidence</summary><p className="mt-2 whitespace-pre-wrap text-sm">{e.content}</p></details>)}{!competitors.length&&!canonical?.facts?.length&&!evidence?.length&&<p className="text-sm">No eligible evidence matched this request.</p>}</div>
