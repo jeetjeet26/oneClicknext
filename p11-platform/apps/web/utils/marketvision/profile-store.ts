@@ -57,7 +57,7 @@ export async function readCompetitorProfiles(propertyId: string, actor: string):
   const saleByCompetitor = new Map(sale?.sources.map(source => [source.competitorId, source]))
   return {
     propertyId, readAt: new Date().toISOString(), warnings,
-    subject: { forSale, ...(subjectResult.status === 'fulfilled' ? { name: subjectResult.value.propertyName, units: subjectResult.value.subjectUnits } : { name: 'Your property', units: [] }) },
+    subject: { forSale, propertyType: sale?.propertyType ?? null, ...(subjectResult.status === 'fulfilled' ? { name: subjectResult.value.propertyName, units: subjectResult.value.subjectUnits } : { name: 'Your property', units: [] }) },
     competitors: competitors.map(c => {
       const brand = brands.get(c.id) ?? null
       const source = saleByCompetitor.get(c.id)

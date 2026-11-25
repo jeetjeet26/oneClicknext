@@ -37,6 +37,7 @@ export interface CompetitorProfile extends Competitor {
 }
 export interface SubjectProfile {
   name: string
+  propertyType?: string | null
   forSale?: boolean
   units: Array<{ id: string; unit_type: string; bedrooms: number; rent_min: number | null; last_updated_at: string | null }>
 }
