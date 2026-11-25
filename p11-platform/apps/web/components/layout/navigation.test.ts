@@ -1,11 +1,30 @@
-import { describe, expect, it } from 'vitest'
-import { currentSection } from './navigation'
+import { load } from 'cheerio'
+import { createElement, Fragment } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it, vi } from 'vitest'
+import { Sidebar } from './Sidebar'
+import { WorkspaceHeading } from './WorkspaceHeading'
+
+const location = vi.hoisted(() => ({ url: new URL('https://hellop11.com/dashboard') }))
+
+vi.mock('next/navigation', () => ({
+  usePathname: () => location.url.pathname,
+  useSearchParams: () => location.url.searchParams,
+}))
 
 describe('console navigation', () => {
-  it('keeps campaign performance under Overview for direct links', () => {
-    expect(currentSection('/dashboard/intelligence', 'campaigns').href).toBe('/dashboard')
-  })
-  it.each([undefined, 'insights', 'decisions', 'sources', 'experiments'])('keeps the other intelligence sections together (%s)', section => {
-    expect(currentSection('/dashboard/intelligence', section).href).toBe('/dashboard/intelligence')
+  it.each([
+    ['/dashboard/intelligence?section=campaigns', '/dashboard/intelligence', 'Property intelligence'],
+    ['/dashboard', '/dashboard', 'Overview'],
+  ])('shows the active workspace for %s', (path, activeHref, heading) => {
+    location.url = new URL(path, 'https://hellop11.com')
+    const markup = renderToStaticMarkup(
+      createElement(Fragment, null, createElement(Sidebar), createElement(WorkspaceHeading)),
+    )
+    const $ = load(markup)
+    const activeLinks = $('aside a[aria-current="page"]').toArray()
+
+    expect(activeLinks.map(link => $(link).attr('href'))).toEqual([activeHref, activeHref])
+    expect($('.console-location strong').text()).toBe(heading)
   })
 })

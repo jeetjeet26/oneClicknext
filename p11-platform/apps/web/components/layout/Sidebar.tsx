@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { P11Logo } from "@/components/ui/P11Logo";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { Menu, ArrowUpRight, type LucideIcon } from "lucide-react";
 import { currentSection, navigationGroups, settingsNavigation } from "./navigation";
 
@@ -36,7 +36,7 @@ function NavLink({
   );
 }
 function SidebarContent() {
-  const section = currentSection(usePathname(), useSearchParams().get("section"));
+  const section = currentSection(usePathname());
   const activeHref = section.label === "Workspace" ? null : section.href;
   return (
     <div className="console-sidebar-content">

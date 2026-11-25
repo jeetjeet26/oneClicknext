@@ -404,7 +404,6 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
   return (
     <div className={`${styles.surface} space-y-6 text-gray-900`}>
       <header>
-        {mode === "performance" && tab === "campaigns" && <Link className="console-link mb-3 inline-flex underline" href="/dashboard">Back to Overview</Link>}
         {mode === "facts" ? <h2 className="text-2xl font-semibold tracking-tight">{heading}</h2> : <h1 className="text-3xl font-semibold tracking-tight">{heading}</h1>}
         <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-600">
           {propertyName} · {mode === "facts"

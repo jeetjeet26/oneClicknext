@@ -173,9 +173,8 @@ export const portalNavigation = [
     icon: MessageSquare,
   },
 ];
-export function currentSection(path: string, section?: string | null) {
+export function currentSection(path: string) {
   if (path === "/dashboard/profile") return { href: path, label: "Profile", description: "Account settings", icon: User };
-  if (path === "/dashboard/intelligence" && section === "campaigns") path = "/dashboard";
   const all = [...navigationGroups.flatMap((g) => g.items), settingsNavigation];
   const match = all
     .filter(
