@@ -82,6 +82,34 @@ def test_cayman_for_sale_discovery_terms_do_not_target_rentals():
     assert all('for sale' in term for term in search_terms(profile, k))
 
 
+def test_builder_inventory_classifies_the_exact_community_with_a_prefixed_listing_name(monkeypatch):
+    import httpx
+    from scrapers import competitor_assessment as assessment
+
+    page_url = 'https://www.kbhome.com/new-homes-bay-area-south/preserve-at-crosswinds'
+    html = '''<title>Preserve at Crosswinds | KB Home</title><main>Model Homes Now Open
+        <script>var FloorPlanList = [{"communityName":"Haven at Crosswinds","style":"Townhome"},
+        {"communityName":"Preserve at Crosswinds","style":"Single Family"}];</script></main>'''
+    html += '<script>' + ' ' * 1_200_000 + '</script>'
+
+    def fetch(url, *, max_bytes, **options):
+        assert url == page_url + '?content=floor-plans'
+        assert len(html.encode()) <= max_bytes
+        return httpx.Response(200, text=html, headers={'Content-Type': 'text/html'},
+                              request=httpx.Request('GET', url))
+
+    monkeypatch.setattr(assessment, 'public_request', fetch)
+    page, _ = assessment.fetch_page(page_url + '?utm_source=maps&content=floor-plans#overview')
+    assert 'Townhome' not in page['text']
+    model_match = assessment.Assessment(candidate=0, kind='community', property_type='single_family',
+        transaction='for_sale', sales_status='active', tier='primary', evidence_page=0,
+        evidence_quote='"style":"Single Family"', comparison='New detached homes for sale.', pricing_quote=None)
+    profile = subject_profile({'name': 'Cayman', 'property_type': 'single_family'})
+    result = assessment.verified_assessment({'name': 'KB Home Preserve at Crosswinds'}, [page], model_match, profile)
+    assert result['tier'] == 'primary'
+    assert assessment.verified_assessment({'name': 'KB Home Haven at Crosswinds'}, [page], model_match, profile) is None
+
+
 def test_website_analysis_classifies_reranks_and_requires_grounded_evidence(monkeypatch):
     from contextlib import nullcontext
     from scrapers import competitor_assessment as assessment
