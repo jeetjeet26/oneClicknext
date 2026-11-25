@@ -1,6 +1,7 @@
 import type { Competitor } from './records'
 import { DISCOVERY_COMPARISON_PREFIX } from './discovery-contracts'
 import type { AdvertisedSalePrice } from './sale-prices'
+import type { ResearchProfile } from './research-contracts'
 
 export interface HistoricalBrand {
   analyzedAt: string | null
@@ -34,6 +35,7 @@ export interface CompetitorProfile extends Competitor {
   scopeNotes: string[]
   withheldUnitIds: string[]
   salePrice?: AdvertisedSalePrice | null
+  research?: ResearchProfile | null
 }
 export interface SubjectProfile {
   name: string
@@ -51,7 +53,10 @@ export interface CompetitorProfiles {
 
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
 const text = (value: unknown) => typeof value === 'string' && value.trim() ? value : null
-export function historicalBrand(row: Record<string, unknown>): HistoricalBrand {
+export function historicalBrand(row: Record<string, unknown>): HistoricalBrand | null {
+  const raw=row.raw_extraction as {basic_extraction?:{raw_chunks?:unknown[]}}|undefined
+  const chunks=raw?.basic_extraction?.raw_chunks?.filter((value):value is string=>typeof value==='string') || []
+  if(chunks.length && chunks.every(chunk=>/web server is down|cloudflare ray id|checking your browser|access denied/i.test(chunk)))return null
   return {
     analyzedAt: text(row.last_analyzed_at), positioning: text(row.positioning_statement),
     voice: text(row.brand_voice), personality: text(row.brand_personality), audience: text(row.target_audience),
@@ -87,6 +92,7 @@ export function discoveryComparison(notes: string | null): string | undefined {
 }
 export function profileText(profile: CompetitorProfile): string {
   return [profile.name, profile.address, ...profile.amenities, ...profile.scopeNotes,
+    ...(profile.research?.facts.map(f=>f.statement) || []),...(profile.research?.offerings.map(o=>o.name) || []),
     ...Object.values(profile.historicalBrand ?? {}).flatMap(v => Array.isArray(v) ? v : typeof v === 'string' ? [v] : []),
     ...(profile.reviewedBrand?.disposition==='published' && profile.reviewedBrand.sourceCurrent ? profile.reviewedBrand.claims.flatMap(c => [c.statement, c.quote]) : []),
   ].join(' ').toLowerCase()

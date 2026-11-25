@@ -91,6 +91,10 @@
     {
       "path": "/api/cron/community-brain-sources",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/process-market-research",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

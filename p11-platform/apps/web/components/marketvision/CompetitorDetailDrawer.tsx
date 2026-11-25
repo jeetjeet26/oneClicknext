@@ -135,7 +135,7 @@ export function CompetitorDetailDrawer({
           </div>}
           <div className="text-center">
             <p className="text-2xl font-bold text-gray-900 dark:text-white">
-              {units.length}
+              {profile?.research ? profile.research.offerings.filter(o=>o.kind==='plan' || o.kind==='rental_unit').length : units.length}
             </p>
             <p className="text-xs text-gray-500">Saved floor plans</p>
           </div>
@@ -232,6 +232,8 @@ export function CompetitorDetailDrawer({
             <div className="py-8 text-center">
               <RefreshCw className="w-6 h-6 animate-spin text-indigo-500 mx-auto" />
             </div>
+          ) : profile?.research?.offerings.length ? (
+            <div className="space-y-3">{profile.research.offerings.map((offering,index)=><div key={index} className="rounded-lg border p-3 text-sm"><div className="flex justify-between gap-3"><strong>{offering.name}</strong><span>{offering.salePrice!==null?`$${offering.salePrice.toLocaleString()}`:offering.monthlyRent!==null?`$${offering.monthlyRent.toLocaleString()}/mo`:'Price unknown'}</span></div><p className="mt-1 text-xs text-gray-500">{offering.kind.replaceAll('_',' ')} · {offering.bedroomsMin??'?'} beds · {offering.bathroomsMin??'?'} baths · {offering.sqftMin?.toLocaleString()??'?'} sq. ft.</p><p className="mt-1 text-xs text-gray-500">{offering.status || 'Availability unconfirmed'}{offering.terms?` · ${offering.terms}`:''}</p></div>)}<a href="/dashboard/marketvision?tab=insights" className="text-sm text-indigo-700 underline">Review dated sources and compare configurations</a></div>
           ) : units.length === 0 ? (
             <div className="py-8 text-center">
               <Home className="w-8 h-8 text-gray-300 mx-auto mb-2" />

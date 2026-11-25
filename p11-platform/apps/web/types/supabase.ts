@@ -1,4 +1,4 @@
-// schema_migration_version: 20261125043733
+// schema_migration_version: 20261125222000
 export type Json =
   | string
   | number
@@ -15,6 +15,100 @@ export type Database = {
   }
   public: {
     Tables: {
+      marketvision_research_jobs: {
+        Row: {
+          id: string
+          property_id: string
+          actor_id: string | null
+          context_hash: string
+          context: Json
+          state: string
+          result: Json
+          lease_token: string | null
+          leased_at: string | null
+          error_message: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          property_id: string
+          actor_id?: string | null
+          context_hash: string
+          context: Json
+          state?: string
+          result?: Json
+          lease_token?: string | null
+          leased_at?: string | null
+          error_message?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          property_id?: string
+          actor_id?: string | null
+          context_hash?: string
+          context?: Json
+          state?: string
+          result?: Json
+          lease_token?: string | null
+          leased_at?: string | null
+          error_message?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      marketvision_research_documents: {
+        Row: {
+          id: string
+          job_id: string
+          property_id: string
+          competitor_id: string | null
+          entity_key: string
+          source_url: string
+          source_kind: string
+          status: string
+          title: string
+          content_text: string
+          content_hash: string
+          metadata: Json
+          fetched_at: string
+        }
+        Insert: {
+          id: string
+          job_id: string
+          property_id: string
+          competitor_id?: string | null
+          entity_key: string
+          source_url: string
+          source_kind: string
+          status: string
+          title: string
+          content_text?: string
+          content_hash: string
+          metadata?: Json
+          fetched_at: string
+        }
+        Update: {
+          id?: string
+          job_id?: string
+          property_id?: string
+          competitor_id?: string | null
+          entity_key?: string
+          source_url?: string
+          source_kind?: string
+          status?: string
+          title?: string
+          content_text?: string
+          content_hash?: string
+          metadata?: Json
+          fetched_at?: string
+        }
+        Relationships: []
+      }
+
       account_credential_events: {
         Row: {
           actor_id: string
@@ -36227,6 +36321,10 @@ export type Database = {
       }
     }
     Functions: {
+      community_transaction: { Args: { p_property_type: string; p_settings: Json }; Returns: string }
+      claim_marketvision_research: { Args: { p_id?: string }; Returns: Json }
+      due_marketvision_research: { Args: { p_limit?: number }; Returns: string[] }
+
 
       read_google_ads_import_credentials: {
         Args: { p_account_id: string; p_property_id: string }

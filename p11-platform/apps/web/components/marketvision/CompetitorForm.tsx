@@ -43,6 +43,7 @@ interface CompetitorFormProps {
   onSubmit: (data: CompetitorFormData) => Promise<void>
   onClose: () => void
   isEdit?: boolean
+  forSale?: boolean
 }
 
 // Fallback amenities if API fails
@@ -61,7 +62,8 @@ export function CompetitorForm({
   initialData, 
   onSubmit, 
   onClose,
-  isEdit = false
+  isEdit = false,
+  forSale = false
 }: CompetitorFormProps) {
   const [formData, setFormData] = useState<CompetitorFormData>({
     reason: '',
@@ -337,7 +339,8 @@ export function CompetitorForm({
               )}
             </div>
 
-            {!isEdit && <>
+            {forSale && <p className="rounded-lg bg-indigo-50 p-3 text-sm text-indigo-900">Home plans, homesite asking prices, HOA costs and incentives are collected with source evidence in Competitive insights after the competitor is saved.</p>}
+            {!isEdit && !forSale && <>
             {/* Unit Pricing */}
             <div>
               <div className="flex items-center justify-between mb-3">

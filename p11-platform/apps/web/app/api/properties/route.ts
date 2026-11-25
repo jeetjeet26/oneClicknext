@@ -49,6 +49,7 @@ export async function GET(request: NextRequest) {
       .select(`
         id,
         name,
+        property_type,
         address,
         settings,
         created_at,

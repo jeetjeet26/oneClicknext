@@ -2,6 +2,7 @@ import {beforeEach,it,expect,vi} from 'vitest'
 const m=vi.hoisted(()=>({rpc:vi.fn(),brands:vi.fn()}))
 vi.mock('./decision-store',async original=>({...await original<typeof import('./decision-store')>(),marketRpc:m.rpc}))
 vi.mock('@/utils/supabase/admin',()=>({createServiceClient:()=>({from:()=>({select:()=>({in:m.brands})})})}))
+vi.mock('./research-profile-store',()=>({readSavedResearchProfiles:async()=>new Map()}))
 import {readCompetitorProfiles} from './profile-store'
 const id=(n:number)=>`00000000-0000-0000-0000-${String(n).padStart(12,'0')}`
 const property=id(1),competitor=id(2),actor=id(3)

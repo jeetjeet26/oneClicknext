@@ -20,6 +20,8 @@ import { BrandIntelligenceDashboard } from '@/components/marketvision/BrandIntel
 import { MarketBriefView } from '@/components/marketvision/MarketBriefView'
 import { MonitoringPanel } from '@/components/marketvision/MonitoringPanel'
 import { SemanticSearchPanel } from '@/components/marketvision/SemanticSearchPanel'
+import { MarketResearchWorkspace } from '@/components/marketvision/MarketResearchWorkspace'
+import { communityModel } from '@/utils/community-model'
 import { MarketSalePricing } from '@/components/marketvision/MarketSalePricing'
 import { useCompetitorProfiles } from '@/utils/marketvision/use-profiles'
 import {
@@ -57,13 +59,14 @@ type CompetitorFormData = {
   units: CompetitorUnitInput[]
 }
 
-type TabId = 'intake' | 'brief' | 'overview' | 'competitors' | 'brand-intel' | 'ask' | 'alerts' | 'monitoring'
+type TabId = 'insights' | 'intake' | 'brief' | 'overview' | 'competitors' | 'brand-intel' | 'ask' | 'alerts' | 'monitoring'
 
 export default function MarketVisionPage() {
   const { currentProperty } = usePropertyContext()
+  const forSale=communityModel(currentProperty || {}).transaction==='for_sale'
   const router=useRouter()
   const searchParams=useSearchParams(),candidateTab=searchParams.get('tab')
-  const routeTab=(['intake','brief','overview','competitors','brand-intel','ask','alerts','monitoring']as const).includes(candidateTab as TabId)?candidateTab as TabId:'competitors'
+  const routeTab=(['insights','intake','brief','overview','competitors','brand-intel','ask','alerts','monitoring']as const).includes(candidateTab as TabId)?candidateTab as TabId:'insights'
   const activeTab=routeTab
   const overviewProfiles = useCompetitorProfiles(activeTab === 'overview' ? currentProperty?.id : undefined)
   const setActiveTab=(tab:TabId)=>{const params=new URLSearchParams(searchParams);params.set('tab',tab);params.delete('runId');params.delete('competitorId');params.delete('requestId');params.delete('brandCompetitorId');params.delete('brandRequestId');router.push(`/dashboard/marketvision?${params}`,{scroll:false})}
@@ -90,6 +93,7 @@ export default function MarketVisionPage() {
   }
 
   const tabs = [
+    { id: 'insights' as TabId, label: 'Insights', icon: Eye },
     { id: 'competitors' as TabId, label: 'Competitors', icon: Building2 },
     { id: 'overview' as TabId, label: 'Overview', icon: Eye },
     { id: 'alerts' as TabId, label: 'Alerts', icon: Bell },
@@ -147,6 +151,7 @@ export default function MarketVisionPage() {
 
       {tools.some(t=>t.id===activeTab)&&<div className="flex flex-wrap items-center gap-3 text-sm"><button onClick={()=>setActiveTab('competitors')} className="text-emerald-700 underline">Back to competitors</button><span className="text-slate-500">Tools / {tools.find(t=>t.id===activeTab)?.label}</span></div>}
       {/* Tab Content */}
+      {activeTab === 'insights' && currentProperty?.id && <MarketResearchWorkspace key={currentProperty.id} propertyId={currentProperty.id} />}
       {activeTab === 'brief' && currentProperty?.id && (
         <MarketBriefView
           key={`brief-${refreshKey}`}
@@ -260,6 +265,7 @@ export default function MarketVisionPage() {
       {showAddForm && currentProperty && (
         <CompetitorForm
           propertyId={currentProperty.id}
+          forSale={forSale}
           onSubmit={handleAddCompetitor}
           onClose={() => setShowAddForm(false)}
         />
@@ -269,6 +275,7 @@ export default function MarketVisionPage() {
       {editingCompetitor && currentProperty && editingCompetitor.propertyId===currentProperty.id && (
         <CompetitorForm
           propertyId={currentProperty.id}
+          forSale={forSale}
           initialData={{
             name: editingCompetitor.name,
             address: editingCompetitor.address || '',

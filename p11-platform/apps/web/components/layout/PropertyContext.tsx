@@ -2,8 +2,9 @@
 
 import { createContext, useContext, useEffect, useMemo, useState, useCallback, useRef, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
+import { communityModel, type CommunityModel } from '@/utils/community-model';
 
-type Property = { id: string; name: string; city?: string };
+type Property = { id: string; name: string; city?: string; property_type?: string | null; operating_model?: string; model?: CommunityModel };
 type PropertyContextValue = {
   properties: Property[];
   currentProperty: Property;
@@ -46,9 +47,10 @@ function parseProperties(data: unknown): Property[] {
       throw new Error('Invalid property response');
     }
     ids.add(value.id);
-    const row = value as { id: string; name: string; settings?: { city?: unknown }; address?: { city?: unknown } };
+    const row = value as { id: string; name: string; property_type?: string | null; settings?: { city?: unknown; onboarding?: unknown }; address?: { city?: unknown } };
     const city = row.settings?.city ?? row.address?.city;
-    return { id: row.id, name: row.name, city: typeof city === 'string' ? city : undefined };
+    const model=communityModel(row);
+    return { id: row.id, name: row.name, city: typeof city === 'string' ? city : undefined, property_type:row.property_type??null, operating_model:model.transaction, model };
   });
 }
 

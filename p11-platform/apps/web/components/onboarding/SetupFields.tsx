@@ -1,6 +1,8 @@
 'use client'
 
 import { AMENITY_OPTIONS, INTEGRATION_CONFIG, type CommunityData, type ContactData, type IntegrationData, type IntegrationPlatform } from '@/app/onboarding/types'
+import { communityModel } from '@/utils/community-model'
+import { changeIntakeTransaction, emptyIntake } from '@/utils/property-setup/intake'
 import { PROPERTY_TYPE_OPTIONS } from '@/utils/property-types'
 import { TextField, IntakeFields, setupButton, setupInput } from './IntakeFields'
 
@@ -10,8 +12,8 @@ export function CommunityFields({ value, onChange }: { value: CommunityData; onC
     <details><summary className="cursor-pointer font-medium">Address, website and property details</summary><div className="mt-4 grid gap-4 sm:grid-cols-2">
       {(['street', 'city', 'state', 'zip'] as const).map(key => <TextField key={key} label={{ street: 'Street address', city: 'City', state: 'State / region', zip: 'Postal code' }[key]} value={value.address[key]} onChange={v => onChange({ address: { ...value.address, [key]: v } })} />)}
       <TextField label="Website URL" value={value.websiteUrl} onChange={websiteUrl => onChange({ websiteUrl })} placeholder="https://example.com" />
-      <TextField label="Number of units" type="number" value={value.unitCount} onChange={unitCount => onChange({ unitCount })} /><TextField label="Year built" type="number" value={value.yearBuilt} onChange={yearBuilt => onChange({ yearBuilt })} />
-      <label className="block text-sm font-medium">Property style<select className={setupInput} value={value.type} onChange={e => onChange({ type: e.target.value as CommunityData['type'] })}><option value="">Not specified</option>{PROPERTY_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
+      <TextField label={value.intake?.transaction==='for_sale'?'Total planned homes':'Number of units'} type="number" value={value.unitCount} onChange={unitCount => onChange({ unitCount })} /><TextField label="Year built" type="number" value={value.yearBuilt} onChange={yearBuilt => onChange({ yearBuilt })} />
+      <label className="block text-sm font-medium">Property style<select className={setupInput} value={value.type} onChange={e => { const type=e.target.value as CommunityData['type']; onChange({type,...(!value.intake?.transaction && type ? {intake:changeIntakeTransaction(value.intake || emptyIntake(),communityModel({property_type:type}).transaction)} : {})}) }}><option value="">Not specified</option>{PROPERTY_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
     </div><div className="mt-4"><TextField label="Additional page addresses, one per line" area value={value.additionalUrls.join('\n')} onChange={v => onChange({ additionalUrls: v.split('\n') })} /></div><p className="mt-2 text-sm">Addresses are references. Capture and review their content in Sources after saving.</p></details>
     <details><summary className="cursor-pointer font-medium">Amenities ({value.amenities.length} selected)</summary><div className="mt-4 grid gap-3 sm:grid-cols-3">{AMENITY_OPTIONS.map(amenity => <label key={amenity} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={value.amenities.includes(amenity)} onChange={e => onChange({ amenities: e.target.checked ? [...value.amenities, amenity] : value.amenities.filter(a => a !== amenity) })} />{amenity}</label>)}</div></details>
   </div>

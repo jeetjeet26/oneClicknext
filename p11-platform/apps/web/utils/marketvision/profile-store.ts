@@ -7,8 +7,10 @@ import { historicalBrand, scopeNotes, type ReviewedBrand, type CompetitorProfile
 import { isForSaleResidentialType } from '@/utils/property-types'
 import { advertisedSalePrice } from './sale-prices'
 import { z } from 'zod'
+import { readSavedResearchProfiles } from './research-profile-store'
+import { communityModel } from '@/utils/community-model'
 
-const columns = 'competitor_id,last_analyzed_at,positioning_statement,brand_voice,brand_personality,target_audience,unique_selling_points,highlighted_amenities,service_offerings,lifestyle_focus,community_events,active_specials,promotional_messaging,urgency_tactics,key_messaging_themes,call_to_action_patterns,pages_analyzed'
+const columns = 'competitor_id,last_analyzed_at,positioning_statement,brand_voice,brand_personality,target_audience,unique_selling_points,highlighted_amenities,service_offerings,lifestyle_focus,community_events,active_specials,promotional_messaging,urgency_tactics,key_messaging_themes,call_to_action_patterns,pages_analyzed,raw_extraction'
 const saleSources = z.object({
   propertyType: z.string().nullable(), transaction: z.string().nullable(),
   sources: z.array(z.object({competitorId: z.string(), text: z.string(), sourceUrl: z.string(), fetchedAt: z.string(), websiteUrl: z.string()})),
@@ -30,7 +32,11 @@ export async function readCompetitorProfiles(propertyId: string, actor: string):
         const ids = competitors.slice(offset, offset + 100).map(c => c.id)
         const { data, error } = await db.from('competitor_brand_intelligence').select(columns).in('competitor_id', ids)
         if (error) throw error
-        for (const row of data ?? []) if (row.competitor_id && ids.includes(row.competitor_id)) brands.set(row.competitor_id, historicalBrand(row))
+        for (const row of data ?? []) if (row.competitor_id && ids.includes(row.competitor_id)) {
+          const brand=historicalBrand(row)
+          brands.set(row.competitor_id,brand)
+          if(!brand)warnings.push('A historical brand snapshot was withheld because its retained pages contain website errors instead of community evidence.')
+        }
       }
     })(),
     (async () => {
@@ -55,6 +61,8 @@ export async function readCompetitorProfiles(propertyId: string, actor: string):
   const sale = saleResult.status === 'fulfilled' ? saleResult.value : null
   const forSale = sale?.transaction ? sale.transaction === 'for_sale' : isForSaleResidentialType(sale?.propertyType)
   const saleByCompetitor = new Map(sale?.sources.map(source => [source.competitorId, source]))
+  let research=new Map<string,import('./research-contracts').ResearchProfile>()
+  try { research=await readSavedResearchProfiles(propertyId,sale?communityModel({property_type:sale.propertyType,operating_model:sale.transaction}).transaction:null,competitors) } catch { warnings.push('Saved web research could not be loaded. Reload to try again.') }
   return {
     propertyId, readAt: new Date().toISOString(), warnings,
     subject: { forSale, propertyType: sale?.propertyType ?? null, ...(subjectResult.status === 'fulfilled' ? { name: subjectResult.value.propertyName, units: subjectResult.value.subjectUnits } : { name: 'Your property', units: [] }) },
@@ -62,7 +70,7 @@ export async function readCompetitorProfiles(propertyId: string, actor: string):
       const brand = brands.get(c.id) ?? null
       const source = saleByCompetitor.get(c.id)
       const salePrice = source && source.websiteUrl === c.websiteUrl && isForSaleResidentialType(c.propertyType) ? advertisedSalePrice(source) : null
-      return { ...c, salePrice, historicalBrand: brand, reviewedBrand: reviews.get(c.id) ?? null, scopeNotes: scopeNotes(c, brand), withheldUnitIds: (c.units ?? []).filter(u => conflicts.has(u.id)).map(u => u.id) }
+      return { ...c, salePrice, research:research.get(c.id)??null, historicalBrand: brand, reviewedBrand: reviews.get(c.id) ?? null, scopeNotes: scopeNotes(c, brand), withheldUnitIds: (c.units ?? []).filter(u => conflicts.has(u.id)).map(u => u.id) }
     }),
   }
 }

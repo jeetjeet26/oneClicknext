@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { emptyIntake, intakeSchema, publicContactFromProperty, newSourcePlan, intakeForEditing } from './intake'
+import { emptyIntake, intakeSchema, publicContactFromProperty, newSourcePlan, intakeForEditing, changeIntakeTransaction } from './intake'
 import { creationProfile } from './creation-contracts'
 import { snapshotFromForm, formFromSnapshot } from './form'
 import { draftFromForm, formFromDraft } from './organization-contracts'
@@ -11,6 +11,12 @@ const community = { name: 'Setup fixture', type: '' as const, address: { street:
 const form = { organization: { name: 'Organization', type: 'developer' as const, legalName: 'Org legal' }, community, contacts: [], integrations: [], documents: [] }
 
 describe('shared onboarding intake', () => {
+  it('replaces incompatible offerings and conversions when the business model changes', () => {
+    const rental = {...emptyIntake(), transaction:'rental' as const, offeringKind:'rental_home' as const, primaryIntent:'apply' as const, lifecycle:'lease_up' as const}
+    expect(changeIntakeTransaction(rental,'for_sale')).toMatchObject({transaction:'for_sale',offeringKind:'home_plan',primaryIntent:'sales_inquiry',lifecycle:'selling'})
+    expect(changeIntakeTransaction({...rental,primaryIntent:'brochure_request'},'for_sale').primaryIntent).toBe('brochure_request')
+    expect(changeIntakeTransaction(intake,'rental')).toMatchObject({offeringKind:'rental_unit',primaryIntent:'tour'})
+  })
   it('round trips every intake field equivalently through both entry paths', () => {
     const property = snapshotFromForm(form)
     const organization = draftFromForm(form, 'review')

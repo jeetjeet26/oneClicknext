@@ -45,6 +45,22 @@ export const intakeSchema = z.object({
 export type SetupIntake = z.infer<typeof intakeSchema>
 export type SourcePlan = z.infer<typeof sourcePlanSchema>
 
+export const TRANSACTION_OFFERINGS: Record<string, SetupIntake['offeringKind'][]> = {
+  for_sale:['home_plan','quick_move_in_home','homesite','land'], rental:['rental_unit','bed_space','rental_home'],
+  care_services:['care_residence'], commercial_lease:['commercial_suite','commercial_building'],
+  destination_booking:['venue','event'], informational:['portfolio_property'],
+}
+export const TRANSACTION_INTENTS: Record<string, SetupIntake['primaryIntent'][]> = {
+  for_sale:['sales_inquiry','private_appointment','register_interest','pricing_availability_request','brochure_request','broker_registration','visit'],
+  rental:['tour','apply','inquiry','pricing_availability_request','waitlist','brochure_request'],
+  care_services:['visit','inquiry','professional_referral','brochure_request'], commercial_lease:['commercial_leasing_inquiry','rfp','visit','inquiry'],
+  destination_booking:['external_booking','inquiry','directions'], informational:['inquiry','directions','brochure_request'],
+}
+export function changeIntakeTransaction(intake:SetupIntake,transaction:SetupIntake['transaction']):SetupIntake {
+  const offerings=TRANSACTION_OFFERINGS[transaction] || [],intents=TRANSACTION_INTENTS[transaction] || []
+  return {...intake,transaction,offeringKind:offerings.includes(intake.offeringKind)?intake.offeringKind:offerings[0] || '',primaryIntent:intents.includes(intake.primaryIntent)?intake.primaryIntent:intents[0] || '',lifecycle:transaction==='for_sale' && intake.lifecycle==='lease_up'?'selling':transaction==='rental' && intake.lifecycle==='selling'?'lease_up':intake.lifecycle}
+}
+
 export function emptyIntake(): SetupIntake {
   return { version: 1, subjectKind: '', scope: '', sector: '', transaction: '', lifecycle: '', offeringKind: '', primaryIntent: '',
     country: '', timezone: '', canonicalName: '', aliases: '', ownershipEntity: '', managementCompany: '', market: '', submarket: '',
