@@ -75,6 +75,60 @@ def test_known_competitor_and_transaction_searches():
     assert 'apartments for rent' in terms
 
 
+def test_cayman_for_sale_discovery_terms_do_not_target_rentals():
+    k = knowledge('single_family', 'transaction_model: For-sale single-family homes.')
+    profile = subject_profile({'name': 'Cayman'}, k)
+    assert profile['summary'] == 'for sale · single family'
+    assert all('for sale' in term for term in search_terms(profile, k))
+
+
+def test_website_analysis_classifies_reranks_and_requires_grounded_evidence(monkeypatch):
+    from contextlib import nullcontext
+    from scrapers import competitor_assessment as assessment
+
+    k = knowledge('single_family', 'transaction_model: For-sale single-family homes.', bedrooms=[4])
+    subject = {'name': 'Cayman', 'property_type': 'single_family'}
+    profile = subject_profile(subject, k)
+    items = [candidate('Preserve at Crosswinds'), candidate('Andalusia'), candidate('Unknown Grove'),
+             candidate('Maurizio Restaurant'), candidate('Townes at Crosswinds')]
+    rows = rank_candidates(items, subject, k, profile, 0, 0, 3, [])[0]
+    pages = {
+        'Preserve at Crosswinds': 'Choose from 4-bedroom single-family homes for sale. From $1,239,990.',
+        'Andalusia': 'Our community of townhomes is sold out.',
+        'Unknown Grove': 'Learn about our community.',
+        'Maurizio Restaurant': 'Full-service Italian restaurant and bar.',
+        'Townes at Crosswinds': 'New three-bedroom townhomes now selling.',
+    }
+    types = {'Preserve at Crosswinds': 'single_family', 'Andalusia': 'townhome',
+             'Unknown Grove': 'single_family', 'Maurizio Restaurant': None, 'Townes at Crosswinds': 'townhome'}
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    monkeypatch.setattr(assessment, 'OpenAI', lambda **kwargs: nullcontext(object()))
+    monkeypatch.setattr(assessment, 'site_pages', lambda row: [{
+        'title': row['name'], 'url': 'https://builder.example.com/', 'text': pages[row['name']]
+    }])
+
+    def model(client, model, subject, batch):
+        assert subject['bedrooms'] == [4]
+        return {i: assessment.Assessment(candidate=i, kind='non_competitor' if row['name'] == 'Maurizio Restaurant' else 'community',
+                 property_type=types[row['name']], transaction='for_sale',
+                 sales_status='sold_out' if row['name'] == 'Andalusia' else 'active', tier='primary', evidence_page=0,
+                 evidence_quote='Invented evidence' if row['name'] == 'Unknown Grove' else pages[row['name']],
+                 comparison='Compares the housing product and bedroom counts.', pricing_quote='From $1,239,990.')
+                for i, (row, _) in enumerate(batch)}
+
+    monkeypatch.setattr(assessment, 'analyze_batch', model)
+    assessed, warnings = assessment.assess_discovery(rows, profile, k)
+    assert not warnings
+    assert assessed[0]['name'] == 'Preserve at Crosswinds'
+    by_name = {row['name']: row for row in assessed}
+    assert by_name['Preserve at Crosswinds']['match']['assessment']['pricing'] == 'From $1,239,990.'
+    assert by_name['Townes at Crosswinds']['match']['tier'] == 'related'
+    assert by_name['Townes at Crosswinds']['match']['assessment']['pricing'] is None
+    assert by_name['Andalusia']['match']['tier'] == 'broader'
+    assert by_name['Unknown Grove']['match']['assessment'] == {'method': 'unverified'}
+    assert 'Maurizio Restaurant' not in by_name
+
+
 def test_no_competitor_observation_becomes_subject_offering():
     k = knowledge('senior', 'Competitor: Assisted Living Home')
     assert subject_profile({'name':'Subject'},k)['segments'] == ['senior']
