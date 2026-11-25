@@ -20,6 +20,8 @@ import { BrandIntelligenceDashboard } from '@/components/marketvision/BrandIntel
 import { MarketBriefView } from '@/components/marketvision/MarketBriefView'
 import { MonitoringPanel } from '@/components/marketvision/MonitoringPanel'
 import { SemanticSearchPanel } from '@/components/marketvision/SemanticSearchPanel'
+import { MarketSalePricing } from '@/components/marketvision/MarketSalePricing'
+import { useCompetitorProfiles } from '@/utils/marketvision/use-profiles'
 import {
   Eye,
   TrendingUp,
@@ -63,6 +65,7 @@ export default function MarketVisionPage() {
   const searchParams=useSearchParams(),candidateTab=searchParams.get('tab')
   const routeTab=(['intake','brief','overview','competitors','brand-intel','ask','alerts','monitoring']as const).includes(candidateTab as TabId)?candidateTab as TabId:'competitors'
   const activeTab=routeTab
+  const overviewProfiles = useCompetitorProfiles(activeTab === 'overview' ? currentProperty?.id : undefined)
   const setActiveTab=(tab:TabId)=>{const params=new URLSearchParams(searchParams);params.set('tab',tab);params.delete('runId');params.delete('competitorId');params.delete('requestId');params.delete('brandCompetitorId');params.delete('brandRequestId');router.push(`/dashboard/marketvision?${params}`,{scroll:false})}
   const candidateRun=searchParams.get('runId')??'',openRequestId=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(candidateRun)?candidateRun:undefined
   const [showAddForm, setShowAddForm] = useState(false)
@@ -114,7 +117,7 @@ export default function MarketVisionPage() {
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <label className="text-sm">Tools <select aria-label="MarketVision tools" value={tools.some(t=>t.id===activeTab)?activeTab:''} onChange={e=>{if(e.target.value)setActiveTab(e.target.value as TabId)}} className="ml-2 rounded border bg-white px-3 py-2 text-slate-900"><option value="">Choose a tool</option>{tools.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}</select></label>
-          <button onClick={handleRefresh} className="flex items-center gap-2 rounded border px-4 py-2 text-sm"><RefreshCw className="h-4 w-4"/>Reload view</button>
+          <button onClick={() => { if (activeTab === 'overview') overviewProfiles.refresh(); handleRefresh() }} className="flex items-center gap-2 rounded border px-4 py-2 text-sm"><RefreshCw className="h-4 w-4"/>Reload view</button>
         </div>
       </div>
 
@@ -153,6 +156,9 @@ export default function MarketVisionPage() {
 
       {activeTab === 'overview' && (
         <div className="space-y-6">
+          {overviewProfiles.loading ? <p role="status">Loading market pricing…</p> : overviewProfiles.error ?
+            <div role="alert"><p>{overviewProfiles.error}</p><button onClick={overviewProfiles.refresh} className="underline">Reload pricing</button></div> : overviewProfiles.data?.subject.forSale ?
+            <MarketSalePricing competitors={overviewProfiles.data.competitors}/> : <>
           {/* Market Summary */}
           <MarketSummary 
             key={`summary-${refreshKey}`}
@@ -172,6 +178,7 @@ export default function MarketVisionPage() {
               propertyId={currentProperty?.id}
             />
           </div>
+          </>}
 
           {/* Recent Alerts */}
           <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">

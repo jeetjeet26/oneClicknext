@@ -1,4 +1,6 @@
 import type { Competitor } from './records'
+import { DISCOVERY_COMPARISON_PREFIX } from './discovery-contracts'
+import type { AdvertisedSalePrice } from './sale-prices'
 
 export interface HistoricalBrand {
   analyzedAt: string | null
@@ -31,9 +33,11 @@ export interface CompetitorProfile extends Competitor {
   reviewedBrand: ReviewedBrand | null
   scopeNotes: string[]
   withheldUnitIds: string[]
+  salePrice?: AdvertisedSalePrice | null
 }
 export interface SubjectProfile {
   name: string
+  forSale?: boolean
   units: Array<{ id: string; unit_type: string; bedrooms: number; rent_min: number | null; last_updated_at: string | null }>
 }
 export interface CompetitorProfiles {
@@ -75,6 +79,10 @@ export function currentClaims(profile: CompetitorProfile, category: string): str
   const review = profile.reviewedBrand
   return review?.disposition === 'published' && review.sourceCurrent
     ? review.claims.filter(c => c.category === category).map(c => c.statement) : []
+}
+
+export function discoveryComparison(notes: string | null): string | undefined {
+  return notes?.split('\n').find(line => line.startsWith(DISCOVERY_COMPARISON_PREFIX))?.slice(DISCOVERY_COMPARISON_PREFIX.length)
 }
 export function profileText(profile: CompetitorProfile): string {
   return [profile.name, profile.address, ...profile.amenities, ...profile.scopeNotes,

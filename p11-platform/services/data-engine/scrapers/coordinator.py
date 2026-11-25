@@ -94,6 +94,7 @@ class ScrapingCoordinator:
         max_competitors: int = 20, auto_add: bool = True, community_context=None,
     ) -> Dict[str, Any]:
         from scrapers.knowledge_discovery import subject_profile, search_terms, rank_candidates
+        from scrapers.competitor_assessment import WEBSITE_LIMIT, assess_discovery
         from utils.geocoding import GeocodingService
         from concurrent.futures import ThreadPoolExecutor
         property_result = self.supabase.table('properties').select(
@@ -118,8 +119,11 @@ class ScrapingCoordinator:
         try:
             from scrapers.google_places import GooglePlacesScraper
             google = GooglePlacesScraper()
+            search_options = {}
+            if not auto_add and profile['transaction'] == 'for_sale' and location.city:
+                search_options['text_location'] = ', '.join(filter(None, (location.city, location.state)))
             properties, source_warnings = google.search_discovery_pool(
-                location.latitude, location.longitude, radius_miles, search_terms(profile, community_context))
+                location.latitude, location.longitude, radius_miles, search_terms(profile, community_context), **search_options)
             warnings.extend(source_warnings)
         except Exception:
             logger.warning('Google discovery unavailable; trying listing source')
@@ -137,7 +141,19 @@ class ScrapingCoordinator:
             location.latitude, location.longitude, radius_miles, existing)
         if missing:
             warnings.append(f'{missing} candidates could not be placed within the radius and were omitted.')
-        # Fetch contact/website data only after ranking; use bounded parallel requests.
+        if not auto_add:
+            # Preserve provider query ordering alongside provisional type/distance ranking.
+            # Otherwise nearby broad matches can consume the website budget before builder results.
+            by_source = {next(iter(row['ils_listings'].values()), ''): row for row in ranked}
+            provider_rows = [by_source[p.source_url] for p in properties if p.source_url and p.source_url in by_source]
+            prioritized = {}
+            for i, row in enumerate(ranked):
+                if i < len(provider_rows):
+                    prioritized.setdefault(id(provider_rows[i]), provider_rows[i])
+                prioritized.setdefault(id(row), row)
+            ranked = list(prioritized.values())
+
+        # Fetch contact/website data only after filtering; use bounded parallel requests.
         if google:
             def enrich(row):
                 source = row.get('ils_listings', {}).get('google_places', '')
@@ -152,7 +168,10 @@ class ScrapingCoordinator:
                 except Exception:
                     pass  # The source listing remains usable; contact details are optional.
             with ThreadPoolExecutor(max_workers=8) as executor:
-                list(executor.map(enrich, ranked[:max_competitors]))
+                list(executor.map(enrich, ranked[:max_competitors if auto_add else WEBSITE_LIMIT]))
+        if not auto_add:
+            ranked, assessment_warnings = assess_discovery(ranked, profile, community_context)
+            warnings.extend(assessment_warnings)
         # Existing auto-add callers retain their requested cap. Review UI receives the pool.
         added = []
         if auto_add:

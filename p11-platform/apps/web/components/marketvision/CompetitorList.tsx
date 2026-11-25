@@ -4,11 +4,13 @@ import { useEffect, useRef, useState } from 'react'
 import { scrapeCompetitor } from '@/utils/marketvision/scrape-client'
 import { Building2, ExternalLink, Plus, RefreshCw, Search } from 'lucide-react'
 import { sendMarketDecision } from '@/utils/marketvision/decision-client'
-import { profileText, rentSummary, type CompetitorProfile } from '@/utils/marketvision/profiles'
+import { discoveryComparison, profileText, rentSummary, type CompetitorProfile } from '@/utils/marketvision/profiles'
 import { useCompetitorProfiles } from '@/utils/marketvision/use-profiles'
 import { CompetitorProfileContent, money, profileDate, safeWebsite } from './CompetitorProfileContent'
 import { CompetitorDiscovery } from './CompetitorDiscovery'
 import { CompetitorProfileComparison } from './CompetitorProfileComparison'
+import { SalePriceEvidence } from './MarketSalePricing'
+import { isForSaleResidentialType } from '@/utils/property-types'
 
 interface CompetitorListProps {
   propertyId: string | undefined
@@ -85,11 +87,15 @@ export function CompetitorList({propertyId, onAddClick, onEditClick, onViewClick
       {visible.map(c => {
         const rents = rentSummary((c.units ?? []).filter(u => !c.withheldUnitIds?.includes(u.id)))
         const url = safeWebsite(c.websiteUrl)
+        const fit = discoveryComparison(c.notes)
+        const showSalePrice = Boolean(c.salePrice) || (data?.subject.forSale && isForSaleResidentialType(c.propertyType))
         return <article key={c.id} aria-label={`${c.name} profile`} className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-900 shadow-sm">
           <div className="border-b border-slate-200 bg-slate-50/60 p-5"><div className="flex items-start justify-between gap-3"><div><h3 className="text-lg font-semibold"><button onClick={() => onViewClick(c)} className="text-left hover:text-emerald-700">{c.name}</button></h3><p className="mt-1 text-sm text-slate-500">{c.address || 'Address not recorded'}</p></div>{!c.isActive ? <span className="rounded-full bg-slate-200 px-2 py-1 text-xs">Archived</span> : <label className="flex shrink-0 items-center gap-2 text-xs"><input type="checkbox" aria-label={`Compare ${c.name}`} checked={comparison.some(item=>item.id===c.id)} disabled={!comparison.some(item=>item.id===c.id) && comparison.length >= 4} onChange={e => setSelected(old => e.target.checked ? [...old, c.id] : old.filter(id => id !== c.id))} />Compare</label>}</div>
-          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2"><div><p className="text-xl font-semibold">{c.scopeNotes.length ? 'Scope needs review' : money(rents.mean)}</p><p className="text-xs text-slate-500">{c.scopeNotes.length ? 'Prices withheld from comparison' : 'Mean saved starting rent'}</p></div><div><p className="text-xl font-semibold">{rents.priced}<span className="text-sm font-normal text-slate-500"> / {c.units?.length ?? 0}</span></p><p className="text-xs text-slate-500">Plans with usable prices</p></div></div>
-          <p className="mt-3 text-xs text-slate-500">Last saved price observation: {profileDate((c.units ?? []).map(u => u.lastUpdatedAt).filter(Boolean).sort().at(-1))}</p>{Boolean(c.withheldUnitIds?.length) && <p className="mt-2 text-xs text-amber-800">Some prices are withheld pending a price-history check. Open the profile to review saved values.</p>}</div>
-          <div className="p-5"><CompetitorProfileContent profile={c} compact /></div>
+          {showSalePrice ? <div className="mt-4"><p className="text-xs text-slate-500">Advertised starting sale price</p><SalePriceEvidence price={c.salePrice}/></div> : <>
+            <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2"><div><p className="text-xl font-semibold">{c.scopeNotes.length ? 'Scope needs review' : money(rents.mean)}</p><p className="text-xs text-slate-500">{c.scopeNotes.length ? 'Prices withheld from comparison' : 'Mean saved starting rent'}</p></div><div><p className="text-xl font-semibold">{rents.priced}<span className="text-sm font-normal text-slate-500"> / {c.units?.length ?? 0}</span></p><p className="text-xs text-slate-500">Plans with usable prices</p></div></div>
+            <p className="mt-3 text-xs text-slate-500">Last saved price observation: {profileDate((c.units ?? []).map(u => u.lastUpdatedAt).filter(Boolean).sort().at(-1))}</p>{Boolean(c.withheldUnitIds?.length) && <p className="mt-2 text-xs text-amber-800">Some prices are withheld pending a price-history check. Open the profile to review saved values.</p>}
+          </>}</div>
+          <div className="p-5">{fit && <div className="mb-4 rounded-lg bg-indigo-50 p-3 text-sm"><h4 className="font-semibold text-indigo-900">Competitive fit from discovery</h4><p className="mt-1">{fit}</p></div>}<CompetitorProfileContent profile={c} compact /></div>
           <div className="flex flex-wrap items-center gap-4 border-t border-slate-200 p-4 text-sm"><button onClick={() => onViewClick(c)} className="rounded-lg bg-emerald-700 px-3 py-2 font-medium text-white">View full profile</button>{c.isActive && <button onClick={() => void scrape([c])} disabled={scraping || saving} className="rounded-lg border border-slate-200 px-3 py-2 disabled:opacity-40">Scrape now</button>}{url && <a href={url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-slate-600">Website<ExternalLink className="h-3.5 w-3.5" /></a>}<details className="ml-auto"><summary aria-label={`Actions for ${c.name}`} className="cursor-pointer text-slate-500">Manage</summary><div className="mt-2 flex gap-4"><button onClick={() => onEditClick(c)} className="underline">Edit</button><button disabled={saving} onClick={() => {setDecision(c); setReason('')}} className="underline">{c.isActive ? 'Archive' : 'Restore'}</button></div></details></div>
           {scrapeMessages[`${propertyId}:${c.id}`] && <p role="status" className="border-t px-4 py-3 text-sm">{scrapeMessages[`${propertyId}:${c.id}`]}</p>}
         </article>
