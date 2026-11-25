@@ -38,3 +38,15 @@ it('withholds comparison prices when integrity history is unavailable',async()=>
  m.rpc.mockImplementation(async(name,args)=>name==='marketvision_brief_sources'?Promise.reject(Error('Unavailable')):name==='read_marketvision_competitors'?{competitors:[{...row,units:[{id:id(5),unit_type:'1BR',rent_min:2000,bedrooms:1}]}]}:original(name,args))
  const result=await readCompetitorProfiles(property,actor);expect(result.competitors[0].withheldUnitIds).toEqual([id(5)]);expect(result.warnings[0]).toContain('withheld')
 })
+it('shows current advertised sale evidence without treating it as saved rent',async()=>{
+ const original=m.rpc.getMockImplementation()!
+ const websiteUrl='https://builder.example.com/preserve'
+ const source={competitorId:competitor,websiteUrl,sourceUrl:websiteUrl,fetchedAt:'2026-11-25T04:23:17Z',text:'From $1,189,990'}
+ m.rpc.mockImplementation(async(name,args)=>name==='read_marketvision_sale_sources'?{propertyType:'single_family',transaction:'for_sale',sources:[source]}:name==='read_marketvision_competitors'?{competitors:[{...row,property_type:'single_family',website_url:websiteUrl}]}:original(name,args))
+ const result=await readCompetitorProfiles(property,actor)
+ expect(result.subject.forSale).toBe(true)
+ expect(result.competitors[0].salePrice).toMatchObject({amount:1189990,quote:source.text})
+ expect(result.competitors[0].units).toHaveLength(0)
+ source.websiteUrl='https://builder.example.com/old-community'
+ expect((await readCompetitorProfiles(property,actor)).competitors[0].salePrice).toBeNull()
+})
