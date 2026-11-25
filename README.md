@@ -194,7 +194,7 @@ oneClick/
 Use GitHub `main` as the single release branch and fast-forward it from a clean, tested checkout. Follow the [P11 release skill](.cursor/skills/p11-deploy-pipeline/SKILL.md) for CLI preflight, device login recovery, and deploy verification.
 
 - **Console.** Verify CLI access to the existing Vercel `web` project. Run `bash p11-platform/apps/web/scripts/stage-production-release.sh` from a linked, clean checkout of `main` with the approved private SiteForge runtime archive. Verify the staged build, promote it to `hellop11.com`, and check the live alias.
-- **Render.** Manually deploy the verified `main` SHA to the affected service. Confirm the live revision and service health.
+- **Render.** Use the Render CLI to deploy the full verified `main` SHA to each affected service. Wait for Live, confirm the exact revision, and verify service health plus the affected operation.
 
 ## 🚀 Quick Start
 
@@ -491,12 +491,7 @@ supabase db reset    # Reset database
 
 ## 🤝 Contributing
 
-This is a private project for P11 Creative. For internal team members:
-
-1. Create a feature branch from `main`
-2. Make your changes with descriptive commits
-3. Submit a pull request for review
-4. Ensure all tests pass and linter is clean
+This is a private project for P11 Creative with one contributor. Commit tested, scoped changes directly to `main` and push with an ordinary fast-forward update. Preserve unrelated local work and reconcile concurrent chat updates before pushing. Follow the [P11 release skill](.cursor/skills/p11-deploy-pipeline/SKILL.md) for Vercel and Render CLI releases.
 
 ---
 

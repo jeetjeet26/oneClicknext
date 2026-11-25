@@ -4,7 +4,11 @@ Read [the P11 release skill](.cursor/skills/p11-deploy-pipeline/SKILL.md) before
 
 ## Release policy
 
-Use GitHub `main` as the single release branch. Use a clean checkout and ordinary fast-forward updates. Keep unrelated local work intact. Check Vercel CLI access from the current session before requesting device authorization or a Terminal handoff. Stage production builds before assigning hellop11.com. Stop on failed checks or a rejected Git update and follow the recovery steps in the release skill.
+Commit and push authorized task changes directly to GitHub `main` using ordinary fast-forward updates. The owner is the sole contributor and wants routine work on `main` without feature branches or pull requests. Preserve unrelated local work by using a clean isolated clone of remote `main` when needed.
+
+Use the installed Vercel and Render CLIs as the primary release interfaces. Check access and project/workspace identity from the current execution session before requesting login or a Terminal handoff. Recheck provider connectivity after temporary failures. Commit tested code to `main`, stage the production build, verify it, and promote that exact deployment to hellop11.com. Deploy affected Render services from the full verified `main` SHA and wait for Live plus functional checks.
+
+Other chats can advance `main`. Recheck GitHub and production immediately before deployment and promotion. Reconcile remote advances with the task, rerun affected checks, and continue through an ordinary push. Follow the release skill for access recovery, interrupted operations, rollback, and final verification.
 
 ## Community product defaults
 
