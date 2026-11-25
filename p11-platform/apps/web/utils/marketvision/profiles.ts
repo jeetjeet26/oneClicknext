@@ -1,4 +1,5 @@
 import type { Competitor } from './records'
+import { DISCOVERY_COMPARISON_PREFIX } from './discovery-contracts'
 
 export interface HistoricalBrand {
   analyzedAt: string | null
@@ -75,6 +76,10 @@ export function currentClaims(profile: CompetitorProfile, category: string): str
   const review = profile.reviewedBrand
   return review?.disposition === 'published' && review.sourceCurrent
     ? review.claims.filter(c => c.category === category).map(c => c.statement) : []
+}
+
+export function discoveryComparison(notes: string | null): string | undefined {
+  return notes?.split('\n').find(line => line.startsWith(DISCOVERY_COMPARISON_PREFIX))?.slice(DISCOVERY_COMPARISON_PREFIX.length)
 }
 export function profileText(profile: CompetitorProfile): string {
   return [profile.name, profile.address, ...profile.amenities, ...profile.scopeNotes,

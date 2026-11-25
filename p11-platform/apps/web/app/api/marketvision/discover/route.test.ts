@@ -56,6 +56,25 @@ it('passes only server-resolved community knowledge to discovery', async () => {
   expect(JSON.parse(mocks.fetch.mock.calls[0][1].body).community_context).toEqual(context)
   expect((await response.json()).warnings).toEqual(['Profile incomplete', 'Partial source results'])
 })
+
+it('uses website-backed types and downgrades evidence with an invalid public URL', async () => {
+  const assessment = {method: 'website_ai', property_type: 'single_family', tier: 'primary', transaction: 'for_sale',
+    sales_status: 'active', source_url: 'https://builder.example.com/preserve', quote: 'New single-family homes for sale.',
+    comparison: 'Both communities sell detached homes.', pricing: null}
+  const match = {tier: 'primary', score: 65, distance_miles: 2, subtype: 'single family', confidence: 'moderate',
+    reasons: [], gaps: [], source_ids: [], context_hash: null}
+  mocks.fetch.mockResolvedValue(Response.json({success: true, data: {success: true, property_name: 'Cayman', competitors: [
+    {name: 'Preserve', property_type: 'multifamily', match: {...match, assessment}},
+    {name: 'Unknown', property_type: 'multifamily', match: {...match, assessment: {...assessment, source_url: 'http://localhost/private'}}},
+  ]}}))
+  const response = await POST(request())
+  expect(response.status).toBe(200)
+  const data = await response.json()
+  expect(data.candidates[0].values).toMatchObject({property_type: 'single_family', website_url: assessment.source_url,
+    notes: expect.stringContaining(assessment.comparison)})
+  expect(data.candidates[1].values.property_type).toBeNull()
+  expect(data.candidates[1].match.assessment).toEqual({method: 'unverified'})
+})
 it('does not fall back across a community knowledge permission failure', async () => {
   mocks.context.mockRejectedValue(new BrainError('Forbidden', 403))
   expect((await POST(request())).status).toBe(403)
