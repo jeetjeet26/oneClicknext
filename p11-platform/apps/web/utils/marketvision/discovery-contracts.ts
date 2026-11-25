@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { competitorValues, marketId, publicMarketUrl } from './decision-contracts'
-import { PROPERTY_TYPE_VALUES } from '@/utils/property-types'
+import { normalizePropertyType, PROPERTY_TYPE_VALUES } from '@/utils/property-types'
 
 export const discoveryRequest = z.object({
   propertyId: marketId,
@@ -56,8 +56,9 @@ export function discoveryCandidates(input: z.infer<typeof discoveryResponse>): D
     const assessment = evidence?.method === 'website_ai' && !publicMarketUrl(evidence.source_url) ? {method: 'unverified' as const} : evidence
     const match = row.match && {...row.match, ...(assessment && {assessment})}
     const website = assessment?.method === 'website_ai' ? assessment : null
-    const propertyType = website?.property_type ?? (assessment?.method !== 'unverified' && (!row.match || row.match.subtype) ?
-      PROPERTY_TYPE_VALUES.find(value => value === row.property_type) ?? null : null)
+    const listingType = row.property_type === 'apartment' ? 'multifamily' : normalizePropertyType(row.property_type)
+    const hasListingEvidence = assessment?.method !== 'unverified' && (!row.match || row.match.subtype)
+    const propertyType = website?.property_type ?? (hasListingEvidence ? listingType : null)
     return [{key, sourceUrl, match, values: discoveryValues.parse({
       name: row.name, address: row.address?.slice(0, 2000) ?? null,
       website_url: website?.source_url ?? (row.website_url && publicMarketUrl(row.website_url) ? row.website_url : null),
