@@ -12,7 +12,13 @@ describe('retained public page acquisition', () => {
   const body='<html><head><title>Current plans</title></head><body><script>Do not retain script instructions</script><div>A1 has 1 bedroom.</div><p>Starting at $1200 monthly rent in USD.</p><p>Contact the property to confirm availability.</p></body></html>'
   respond(body); const result=await acquirePublicSource(url)
   expect(result).toMatchObject({status:'received',requestedUrl:url,finalUrl:'https://example.com/current/',body,bodyHash:createHash('sha256').update(body).digest('hex'),parserVersion:'public-html-v1',textTruncated:false})
-  expect(result.text).toContain('A1 has 1 bedroom.\n');expect(result.text).not.toContain('script instructions');expect(read).toHaveBeenCalledOnce();expect(read).toHaveBeenCalledWith(url,expect.objectContaining({maxBytes:1000000,timeoutMs:25000}))
+  expect(result.text).toContain('A1 has 1 bedroom.\n');expect(result.text).not.toContain('script instructions');expect(read).toHaveBeenCalledOnce();expect(read).toHaveBeenCalledWith(url,{timeoutMs:25000,headers:{accept:'text/html, application/xhtml+xml, text/plain'}})
+ })
+ it('keeps complete HTML from builder pages above the former 1 MB limit', async () => {
+  const body = `<html><body><script>${'x'.repeat(1_200_000)}</script><p>New homes with four bedrooms are available from the builder.</p></body></html>`
+  respond(body)
+  const result = await acquirePublicSource(url)
+  expect(result).toMatchObject({status:'received',body,bodyHash:createHash('sha256').update(body).digest('hex'),text:'New homes with four bedrooms are available from the builder.'})
  })
  it('marks truncated extraction text while retaining the complete bounded response',async()=>{const body='Repeated floor plan source '.repeat(2500);respond(body,'text/plain');const r=await acquirePublicSource(url);expect(r.status).toBe('received');expect(r.textTruncated).toBe(true);expect(r.text!.length).toBeLessThanOrEqual(50000);expect(r.body).toBe(body)})
  it('an HTTP failure is not pricing evidence',async()=>{respond('Denied','text/html',403);expect(await acquirePublicSource(url)).toMatchObject({status:'failed',errorCode:'http_error',statusCode:403});expect(read).toHaveBeenCalledOnce()})
