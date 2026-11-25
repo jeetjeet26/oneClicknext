@@ -14,6 +14,19 @@ describe('portfolio source attribution',()=>{
  it('accepts a sourced observation with explicit missing data',()=>expect(validatePortfolioAnswer(answer(),groups).missingData).toHaveLength(1))
  it('rejects fabricated source references',()=>{const a=answer();a.insights[0].sourceIds=['invented'];expect(()=>validatePortfolioAnswer(a,groups)).toThrow('unavailable source')})
  it('rejects numbers supported only by an uncited source',()=>{const a=answer();a.insights[0].observation='Recorded rent is 3000.';expect(()=>validatePortfolioAnswer(a,groups)).toThrow('number outside')})
+ it('derives attribution from cited sources when the model omits or empties attribution fields',()=>{
+  const empty=answer();empty.insights[0].communityIds=[];empty.insights[0].evidenceKeys=[]
+  expect(validatePortfolioAnswer(empty,groups).insights[0]).toMatchObject({communityIds:[id],evidenceKeys:[`community:${id}`]})
+  const finding={observation:answer().insights[0].observation,sourceIds:['source-a']}
+  expect(validatePortfolioAnswer({...answer(),insights:[finding]},groups).insights[0]).toMatchObject({communityIds:[id],evidenceKeys:[`community:${id}`]})
+ })
+ it('accepts normal rounding of provider conversions within the cited source',()=>{
+  const fractional:PortfolioGroup[]=[{...groups[0],data:{sources:[{id:'source-a',propertyId:id,content:{conversions:189.159854}}]}}]
+  const a=answer();a.insights[0].observation='Recorded conversions were 189.16.'
+  expect(validatePortfolioAnswer(a,fractional).insights[0].observation).toContain('189.16')
+  a.insights[0].observation='Recorded conversions were 189.17.'
+  expect(()=>validatePortfolioAnswer(a,fractional)).toThrow('number outside')
+ })
  it('requires a source for every finding',()=>{const a=answer();a.insights[0].sourceIds=[];expect(()=>validatePortfolioAnswer(a,groups)).toThrow()})
 })
 
@@ -68,6 +81,26 @@ describe('campaign portfolio answers',()=>{
     const result=await readPortfolioBrain(id,input)
     expect(result).toMatchObject({modelState:'received',answer:{insights:[{observation}]}})
     expect(readMarketingFacts).toHaveBeenCalledWith(undefined,{propertyId:id,startDate:input.start,endDate:input.end})
+  })
+
+  it('repairs an unsupported calculation using a separate saved model receipt',async ()=>{
+    savedAnalysis(campaignAnswer('The campaigns delivered 999 conversions.'))
+    const base=vi.mocked(brainRpc).getMockImplementation()!
+    vi.mocked(brainRpc).mockImplementation(async <T>(name:string,params:Record<string,unknown>)=>{
+      if(name==='brain_begin_model'&&params?.p_id!==requestId){
+        return {state:'received',response:{choices:[{message:{content:campaignAnswer('Google Ads recorded 7 conversions.')}}]}} as T
+      }
+      return base(name,params) as Promise<T>
+    })
+    const result=await readPortfolioBrain(id,input)
+    expect(result).toMatchObject({modelState:'received',answer:{insights:[{observation:'Google Ads recorded 7 conversions.'}]}})
+    const calls=vi.mocked(brainRpc).mock.calls.filter(([name])=>name==='brain_begin_model')
+    expect(calls).toHaveLength(2)
+    const repairId=calls[1][1]?.p_id
+    expect(repairId).not.toBe(requestId)
+    vi.mocked(brainRpc).mockClear()
+    await readPortfolioBrain(id,input)
+    expect(vi.mocked(brainRpc).mock.calls.filter(([name])=>name==='brain_begin_model')[1][1]?.p_id).toBe(repairId)
   })
 
   it.each([
