@@ -1,5 +1,6 @@
 import type { Competitor } from './records'
 import { DISCOVERY_COMPARISON_PREFIX } from './discovery-contracts'
+import type { AdvertisedSalePrice } from './sale-prices'
 
 export interface HistoricalBrand {
   analyzedAt: string | null
@@ -32,9 +33,11 @@ export interface CompetitorProfile extends Competitor {
   reviewedBrand: ReviewedBrand | null
   scopeNotes: string[]
   withheldUnitIds: string[]
+  salePrice?: AdvertisedSalePrice | null
 }
 export interface SubjectProfile {
   name: string
+  forSale?: boolean
   units: Array<{ id: string; unit_type: string; bedrooms: number; rent_min: number | null; last_updated_at: string | null }>
 }
 export interface CompetitorProfiles {

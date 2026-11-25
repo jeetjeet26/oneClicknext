@@ -9,6 +9,7 @@ import {CompetitorUnitsPanel} from './CompetitorUnitsPanel'
 import {CompetitorExtractionPanel} from './CompetitorExtractionPanel'
 import {CompetitorListingPanel} from './CompetitorListingPanel'
 import {CompetitorPriceOverview} from './CompetitorPriceOverview'
+import {SalePriceEvidence} from './MarketSalePricing'
 import {CompetitorSourcePanel} from './CompetitorSourcePanel'
 import {
   X,
@@ -126,12 +127,12 @@ export function CompetitorDetailDrawer({
       <div className="flex-1 overflow-y-auto">
         {/* Quick Stats */}
         <div className="grid grid-cols-3 gap-4 p-4 bg-gray-50 dark:bg-gray-700/30">
-          <div className="text-center">
+          {profile?.salePrice ? <div className="text-center"><p className="text-xs text-gray-500">Advertised starting sale price</p><SalePriceEvidence price={profile.salePrice}/></div> : <div className="text-center">
             <p className="text-2xl font-bold text-gray-900 dark:text-white">
               {profile?.scopeNotes.length?'Needs review':avgRent!==null ? `$${avgRent.toLocaleString()}` : 'Unknown'}
             </p>
             <p className="text-xs text-gray-500">Mean saved starting rent</p>
-          </div>
+          </div>}
           <div className="text-center">
             <p className="text-2xl font-bold text-gray-900 dark:text-white">
               {units.length}
@@ -209,7 +210,7 @@ export function CompetitorDetailDrawer({
           </div>
         </div>
 
-        {!profile?.scopeNotes.length && <CompetitorPriceOverview units={units} withheld={profile?.withheldUnitIds}/>}
+        {!profile?.scopeNotes.length && !profile?.salePrice && <CompetitorPriceOverview units={units} withheld={profile?.withheldUnitIds}/>}
         {profile && <div className="border-b p-5"><CompetitorProfileContent profile={profile}/></div>}
 
         {refreshStatus.message && <p role="alert" className="p-4 text-sm text-red-700">{refreshStatus.message}</p>}

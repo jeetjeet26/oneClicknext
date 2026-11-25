@@ -6,7 +6,12 @@ export const brandCategories=['positioning','audience','voice','amenity','servic
 export const BrandClaim=z.object({category:z.enum(brandCategories),kind:z.enum(['source_claim','interpretation']),statement:z.string().min(1).max(1000).refine(s=>s.trim().length>0),quote:z.string().min(1).max(1000)}).strict()
 export const BrandOutput=z.object({claims:z.array(BrandClaim).max(50),notes:z.string().max(5000).nullable()}).strict()
 export type BrandPreview=z.infer<typeof BrandOutput>
-export function validateBrandPreview(content:string,value:unknown){const parsed=BrandOutput.parse(value);for(const c of parsed.claims)if(!content.includes(c.quote))throw new Error('A quotation is absent from the retained page.');return parsed}
+export function validateBrandPreview(content: string, value: unknown): BrandPreview {
+  const parsed = BrandOutput.parse(value)
+  const claims = parsed.claims.filter(claim => content.includes(claim.quote))
+  if (!claims.length && parsed.claims.length) throw new Error('No quotations match the retained page.')
+  return { ...parsed, claims }
+}
 export const BrandRequest=z.object({requestId:marketId,propertyId:marketId,competitorId:marketId,sourceId:marketId,sourceVersion:version,confirmedSourceScope:z.literal(true),reason}).strict()
 export const BrandRead=z.object({propertyId:marketId,competitorId:marketId.optional(),requestId:marketId.optional(),cursor:marketId.optional(),view:z.enum(['current','requests','reviews','legacy']).default('current')}).strict().refine(v=>!v.requestId||(!v.cursor&&!!v.competitorId))
 export const BrandControl=z.object({requestId:marketId,propertyId:marketId,brandRequestId:marketId,expectedVersion:version,action:z.enum(['stop','recover']),reason}).strict()
