@@ -102,7 +102,7 @@ def subject_profile(property_data, knowledge=None):
         signal_text = '. '.join(clause for clause in re.split(r'[.;\n]', signal.text)
                                if not re.search(r'\b(unconfirmed|unverified|unknown|uncertain|not (?:yet )?(?:confirmed|verified))\b', clause, re.I))
         if 'transaction_model:' in signal_text:
-            transaction = 'rental' if re.search(r'rent|lease', signal_text, re.I) else 'for_sale' if re.search(r'ownership|for sale|purchase', signal_text, re.I) else 'care_services' if re.search(r'care', signal_text, re.I) else None
+            transaction = 'for_sale' if re.search(r'\b(?:ownership|for[\s-]+sale|purchase)\b', signal_text, re.I) else 'rental' if re.search(r'\b(?:rent|rental|lease|leasing)\b', signal_text, re.I) else 'care_services' if re.search(r'care', signal_text, re.I) else transaction
         detected = segments(signal_text)
         offered_services = service_tags(signal_text)
         services |= offered_services
@@ -121,6 +121,8 @@ def subject_profile(property_data, knowledge=None):
         specific.add(kind)
     if specific & {'active_adult', 'independent_living', 'assisted_living', 'memory_care'}:
         specific.discard('senior')
+    if not transaction and specific and specific <= FOR_SALE:
+        transaction = 'for_sale'
     warnings = []
     if conflict:
         warnings.append('The saved community type differs from its reviewed living options. Matching prioritizes the reviewed living options; review the community facts.')
@@ -139,8 +141,11 @@ def search_terms(profile, knowledge=None):
         direct = [term + ' for rent' for term in direct]
     elif profile.get('transaction') == 'for_sale':
         direct = [term + ' for sale' for term in direct]
-    related = ['senior living communities'] if any(SEGMENTS.get(s, ('',))[0] == 'senior' for s in profile['segments']) else ['residential communities']
-    broad = ['apartments for rent', 'homes for sale communities'] if set(profile['segments']) & FOR_SALE else ['apartments for rent', 'townhome communities']
+    if profile['transaction'] == 'for_sale':
+        related = ['new home communities for sale']
+    else:
+        related = ['senior living communities'] if any(SEGMENTS.get(s, ('',))[0] == 'senior' for s in profile['segments']) else ['residential communities']
+    broad = ['new construction homes for sale', 'new townhomes for sale'] if profile['transaction'] == 'for_sale' else ['apartments for rent', 'townhome communities']
     known = knowledge.known_competitors if knowledge else []
     service_search = [direct[0] + ' ' + profile['services'][0]] if direct and profile.get('services') else []
     return list(dict.fromkeys(direct + related + broad + service_search + known))[:12]

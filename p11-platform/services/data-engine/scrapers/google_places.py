@@ -269,7 +269,7 @@ class GooglePlacesScraper:
         logger.info(f"Found {len(all_results)} potential competitors from Google Places (property_type filter: {property_type})")
         return all_results[:max_results]
     
-    def search_discovery_pool(self, lat, lng, radius_miles, keywords, pool_limit=100):
+    def search_discovery_pool(self, lat, lng, radius_miles, keywords, pool_limit=100, *, text_location=None):
         """Search every lane independently so broad alternatives cannot be starved."""
         from concurrent.futures import ThreadPoolExecutor
         from scrapers.knowledge_discovery import segments
@@ -279,8 +279,10 @@ class GooglePlacesScraper:
             # Bound each lane; do not send private community evidence to providers.
             client = googlemaps.Client(key=self.api_key, timeout=8, retry_timeout=10)
             try:
-                return client.places_nearby(keyword=keyword,
-                    location=(lat, lng), radius=min(int(radius_miles * 1609.34), 50000)), None
+                area = {'location': (lat, lng), 'radius': min(int(radius_miles * 1609.34), 50000)}
+                if text_location and ('for sale' in keyword or 'new construction' in keyword):
+                    return client.places(query=f'{keyword} in {text_location}', **area), None
+                return client.places_nearby(keyword=keyword, **area), None
             except Exception:
                 return None, 'One Google Places search could not complete. Results may be incomplete.'
         with ThreadPoolExecutor(max_workers=4) as executor:
@@ -301,7 +303,7 @@ class GooglePlacesScraper:
                     continue
                 raw = lane[index]
                 place = self._parse_place(raw)
-                if not place or place.place_id in seen:
+                if not place or not place.place_id or place.place_id in seen or raw.get('business_status') == 'CLOSED_PERMANENTLY':
                     continue
                 # Housing categories remain eligible; reject only clearly unrelated businesses.
                 if re.search(r'\b(storage|hotel|motel|hostel|brokerage|realtor|property management|management company|corporate office|leasing office)\b', place.name, re.I):
@@ -310,7 +312,8 @@ class GooglePlacesScraper:
                 # listings with mixed Google categories, including senior communities.
                 housing_name = segments(place.name) or re.search(r'\b(residences?|residential|housing|homes|living)\b', place.name, re.I)
                 fitness_business = 'gym' in place.types or re.search(r'\b(gym|fitness (club|center|centre))\b', place.name, re.I)
-                if fitness_business and not housing_name:
+                nonhousing_types = {'restaurant', 'cafe', 'bar', 'bakery', 'meal_takeaway', 'night_club'}
+                if not housing_name and (fitness_business or nonhousing_types.intersection(place.types)):
                     continue
                 seen.add(place.place_id)
                 places.append(self.to_scraped_property(place, include_details=False))
