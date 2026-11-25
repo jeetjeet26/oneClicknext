@@ -5,7 +5,7 @@ import logging
 import os
 import re
 from typing import Literal
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 from httpx import HTTPStatusError, InvalidURL, RequestError
@@ -51,19 +51,54 @@ def community_identity(name):
     return normalize(re.split(r'\s+(?:by|new homes)\b', name, maxsplit=1, flags=re.I)[0])
 
 
+def community_slug(url):
+    return normalize(urlsplit(url).path.rstrip('/').rsplit('/', 1)[-1])
+
+
+def without_tracking(url):
+    target = urlsplit(url)
+    query = urlencode([(key, value) for key, value in parse_qsl(target.query, keep_blank_values=True)
+                       if not key.lower().startswith('utm_') and key.lower() not in {'gclid', 'fbclid', 'y_source'}])
+    return target._replace(query=query, fragment='').geturl()
+
+
+def kb_floor_plan_evidence(soup, url):
+    if urlsplit(url).hostname not in {'kbhome.com', 'www.kbhome.com'}:
+        return ''
+    for script in soup.find_all('script', string=re.compile(r'\bvar\s+FloorPlanList\s*=')):
+        content = str(script.string)
+        start = re.search(r'\bvar\s+FloorPlanList\s*=\s*', content).end()
+        try:
+            plans, _ = json.JSONDecoder().raw_decode(content[start:])
+        except (ValueError, RecursionError):
+            continue
+        if not isinstance(plans, list):
+            continue
+        for plan in plans:
+            if not isinstance(plan, dict):
+                continue
+            name, style = plan.get('communityName'), plan.get('style')
+            if (isinstance(name, str) and 6 <= len(name) <= 140 and normalize(name) == community_slug(url)
+                    and isinstance(style, str) and 1 <= len(clean(style)) <= 40):
+                return f'Published floor plan for {name}: ' + json.dumps({'style': clean(style)}, separators=(',', ':'))
+    return ''
+
+
 def fetch_page(url):
-    response = public_request(url, timeout=3.5, max_bytes=850_000, headers={'Accept': 'text/html'})
+    response = public_request(without_tracking(url), timeout=5, max_bytes=2_000_000, headers={'Accept': 'text/html'})
     response.raise_for_status()
     if 'html' not in response.headers.get('content-type', '').lower():
         return None
     soup = BeautifulSoup(response.content, 'html.parser')
     title = clean(' '.join(node.get_text(' ', strip=True) for node in soup.select('title, h1')))
     description = soup.find('meta', attrs={'name': 'description'})
+    final = str(response.url)
+    inventory = kb_floor_plan_evidence(soup, final)
     links = [(clean(a.get_text(' ', strip=True)), a['href']) for a in soup.find_all('a', href=True)[:300]]
     for node in soup.select('script, style, noscript, template, svg, nav, footer'):
         node.decompose()
-    content = clean(f"{title} {description.get('content', '') if description else ''} {(soup.body or soup).get_text(' ', strip=True)}")
-    final = str(response.url)
+    main = soup.select_one('main, [role=main]') or soup.body or soup
+    content = clean(f"{title} {description.get('content', '') if description else ''} {inventory} {main.get_text(' ', strip=True)}")
     return {'url': final, 'title': title, 'text': content[:5200]}, links
 
 
@@ -150,7 +185,11 @@ def verified_assessment(row, pages, result, profile):
         return None
     name = community_identity(row['name'])
     street = street_identity(row.get('address') or '')
-    if not ((len(name) >= 6 and name in normalize(page['title'] + ' ' + page['url'] + ' ' + quote)) or
+    slug = community_slug(page['url'])
+    host_labels = (urlsplit(page['url']).hostname or '').split('.')
+    builder_alias = len(slug) >= 6 and slug in normalize(page['title']) and any(
+        len(label) >= 5 and name == normalize(label) + slug for label in host_labels[:-1])
+    if not (builder_alias or (len(name) >= 6 and name in normalize(page['title'] + ' ' + page['url'] + ' ' + quote)) or
             (len(street) >= 8 and street in street_identity(page['text']))):
         return None
     if result.kind == 'non_competitor':
