@@ -1,5 +1,6 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
+import { z } from 'zod'
 import { createServiceClient } from '@/utils/supabase/admin'
 import { readMarketingFacts } from '@/utils/analytics/read-marketing-facts'
 import { buildBiReport, type BiFact } from '@/utils/analytics/report-data'
@@ -15,6 +16,13 @@ import { generateRecommendationAnalysis } from './recommendation-model'
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const json = (value: unknown) => JSON.parse(JSON.stringify(value))
+function analysisFailure(stage: string, error: unknown) {
+  // Keep provider messages, source values and URLs out of logs and client errors.
+  console.error('AI recommendation analysis failed', { stage, type: error instanceof Error ? error.name : 'Error',
+    ...(error instanceof z.ZodError ? { fields: error.issues.slice(0, 10).map(issue => issue.path.join('.')) } : {}),
+  })
+  return new IntelligenceError('AI recommendations could not be verified from the saved evidence. Please retry the analysis.', 503)
+}
 
 export async function recommendationContext(actor: string, propertyId: string, start: string, end: string) {
   const scope = await resolveCommunityScope(actor, propertyId, 'research')
@@ -43,7 +51,9 @@ export async function recommendationContext(actor: string, propertyId: string, s
   const observedAt = new Date().toISOString()
   const sources: RecommendationEvidence[] = []
   function add(id: string, label: string, data: unknown, reference = id, at = observedAt) {
-    sources.push(recommendationEvidence.parse({ id, label, reference: reference.slice(0, 200), observedAt: at, data: json(data) }))
+    // PostgREST returns timezone offsets and microseconds. Retain the same instant
+    // in the canonical UTC format accepted by both evidence and saved documents.
+    sources.push(recommendationEvidence.parse({ id, label, reference: reference.slice(0, 200), observedAt: new Date(at).toISOString(), data: json(data) }))
   }
   add('marketing:coverage', 'Marketing dates, definitions and data quality', {
     start, end, priorStart, priorEnd, coverage: report.coverage,
@@ -103,7 +113,10 @@ export async function recommendationContext(actor: string, propertyId: string, s
 export async function generatePropertyRecommendations(propertyId: string, start: string, end: string) {
   const actor = await intelligenceActor(propertyId, true)
   if (!process.env.OPENAI_API_KEY) throw new IntelligenceError('AI recommendations are temporarily unavailable. Please retry later.', 503)
-  const { input, scope } = await recommendationContext(actor, propertyId, start, end)
+  const { input, scope } = await recommendationContext(actor, propertyId, start, end).catch(error => {
+    if (error instanceof z.ZodError) throw analysisFailure('source', error)
+    throw error
+  })
   // Read timestamps change between retries; source content, reporting periods and
   // source timestamps inside the data determine whether the analysis is reusable.
   const sourceHash = hash({ ...input, version: 1, model: process.env.INTELLIGENCE_RECOMMENDATION_MODEL || 'gpt-5.4',
@@ -111,18 +124,20 @@ export async function generatePropertyRecommendations(propertyId: string, start:
   const key = `ai-recommendations:${sourceHash}`
   const existing = (await readDocuments(propertyId, ['recommendation'])).find(doc => doc.key === key)
   if (existing) return { document: existing, reused: true }
-  const output = await generateRecommendationAnalysis(input)
+  const output = await generateRecommendationAnalysis(input).catch(error => { throw analysisFailure('model', error) })
   await intelligenceActor(propertyId, true)
   await requireCurrentScope(scope, propertyId)
   const generatedAt = new Date().toISOString()
   const generation = { version: 1 as const, ...output, sourceHash, start, end, generatedAt, sources: input.sources }
-  const payload = recommendationSchema.parse({
+  const parsedPayload = recommendationSchema.safeParse({
     generation, title: `AI recommendations · ${start} to ${end}`, rationale: output.summary,
     targetMetric: 'Marketing performance', owner: 'AI analysis', executionType: 'data', confidence: 'medium',
     evidence: input.sources.slice(0, 30).map(({ label, reference, observedAt }) => ({ label, reference, observedAt })),
     basecampUrl: '', expectedImpact: 'Proposed tests; outcomes require measurement.', rollback: 'Each recommendation includes its own stop or reversal conditions.',
     result: '', releaseEvent: null, measurementEvent: null,
   })
+  if (!parsedPayload.success) throw analysisFailure('saved_output', parsedPayload.error)
+  const payload = parsedPayload.data
   const id = hash(`${propertyId}:${key}`)
   const requestId = `${id.slice(0, 8)}-${id.slice(8, 12)}-4${id.slice(13, 16)}-a${id.slice(17, 20)}-${id.slice(20, 32)}`
   try {

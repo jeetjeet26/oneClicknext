@@ -1,4 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 const m = vi.hoisted(() => ({ actor: vi.fn(), docs: vi.fn(), save: vi.fn(), scope: vi.fn(), current: vi.fn(), context: vi.fn(), portfolio: vi.fn(), facts: vi.fn(), research: vi.fn(), model: vi.fn() }))
 vi.mock('@/utils/supabase/admin', () => ({ createServiceClient: () => ({}) }))
 vi.mock('@/utils/community-brain/server', () => ({ resolveCommunityScope: m.scope, requireCurrentScope: m.current, getCommunityContext: m.context }))
@@ -31,6 +32,12 @@ it('keeps campaign identity, previous-period baselines, knowledge and sale model
   expect(m.portfolio).toHaveBeenCalledWith('2026-10-01', '2026-10-31', false, propertyId)
   expect(m.current).toHaveBeenCalledWith(expect.objectContaining({ id: 'scope' }), propertyId)
 })
+it('normalizes PostgreSQL source timestamps before retaining recommendation evidence', async () => {
+  m.research.mockResolvedValue({ documents: [{ id: 'document', entityKey: 'subject', title: 'Cayman source', url: 'https://www.dividendhomes.com/cayman', fetchedAt: '2026-11-25T22:00:00+00:00', kind: 'official', status: 'captured', excerpt: 'Current community evidence' }], result: null })
+  const { input } = await recommendationContext('actor', propertyId, '2026-10-01', '2026-10-31')
+  expect(input.sources.find(source => source.id === 'market:document')?.observedAt).toBe('2026-11-25T22:00:00.000Z')
+  await expect(generatePropertyRecommendations(propertyId, '2026-10-01', '2026-10-31')).resolves.toMatchObject({ reused: false })
+})
 it('does not fetch data or call the model when generation access is denied', async () => {
   m.actor.mockRejectedValueOnce(new Error('Forbidden'))
   await expect(generatePropertyRecommendations(propertyId, '2026-10-01', '2026-10-31')).rejects.toThrow('Forbidden')
@@ -59,4 +66,15 @@ it('never saves after a failed model review or a revoked scope', async () => {
   m.current.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Scope revoked'))
   await expect(generatePropertyRecommendations(propertyId, '2026-10-01', '2026-10-31')).rejects.toThrow('Scope revoked')
   expect(m.save).not.toHaveBeenCalled()
+})
+it('reports model validation failures as analysis errors rather than blaming valid user dates', async () => {
+  const failure = z.string().safeParse(123)
+  if (failure.success) throw new Error('Invalid test fixture')
+  m.model.mockRejectedValueOnce(failure.error)
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    await expect(generatePropertyRecommendations(propertyId, '2026-10-01', '2026-10-31')).rejects.toMatchObject({ status: 503, message: expect.stringContaining('saved evidence') })
+    expect(m.save).not.toHaveBeenCalled()
+    expect(log).toHaveBeenCalledWith('AI recommendation analysis failed', expect.objectContaining({ stage: 'model', type: 'ZodError' }))
+  } finally { log.mockRestore() }
 })
