@@ -113,7 +113,7 @@ export async function processResearchJob(id?:string){
     try{
       const synthesis=await synthesizeResearch(profiles,job.context.model,comparisons,documents)
       insights=synthesis.insights
-      if(synthesis.withheldCount>0)synthesisError=`${synthesis.withheldCount} generated insight${synthesis.withheldCount===1?' was':'s were'} withheld because the structure or source quotations could not be verified.${insights.length===0?' No supported comparative insights were retained.':''} Refresh research to retry comparative analysis.`
+      if(synthesis.withheldCount>0)synthesisError=`${synthesis.withheldCount} generated insight${synthesis.withheldCount===1?' was':'s were'} withheld because the structure, source quotations or comparative conclusions could not be verified.${insights.length===0?' No supported comparative insights were retained.':''} Refresh research to retry comparative analysis.`
     }catch(error){synthesisError=error instanceof Error?error.message:'Comparative analysis needs recovery'}
     const previous=await db.from('marketvision_research_jobs').select('result').eq('property_id',job.property_id).neq('id',job.id).in('state',['completed','partial']).order('created_at',{ascending:false}).limit(1).maybeSingle()
     if(previous.error)throw new Error('Previous research history could not be loaded')
