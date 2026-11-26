@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { calendarDate } from "@/utils/delivery/contracts";
 import { propertyIdSchema } from "@/utils/property-setup/contracts";
+import { aiRecommendationGeneration } from './recommendation-contracts';
 const text = z.string().trim().max(8000);
 const label = z.string().trim().min(1).max(200);
 const url = z
@@ -217,6 +218,7 @@ export const batchSchema = z
   });
 export const recommendationSchema = z
   .object({
+    generation: aiRecommendationGeneration.optional(),
     title: label,
     rationale: text.min(3),
     targetMetric: label,

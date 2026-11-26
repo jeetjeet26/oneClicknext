@@ -100,9 +100,14 @@ export async function readDocuments(propertyId: string, kinds?: Kind[]) {
     );
   return r.data ?? [];
 }
-export async function saveDocument(actor: string, input: Command) {
+export async function saveDocument(actor: string, input: Command, options?: { aiGeneration: true }) {
   const { requestId, propertyId, ...command } = input;
   if (command.operation === "save") {
+    if (command.kind === 'recommendation' && !options?.aiGeneration &&
+        (command.key.startsWith('ai-recommendations:') ||
+         (command.payload && typeof command.payload === 'object' && 'generation' in command.payload))) {
+      throw new IntelligenceError('Refresh AI recommendations to create a new analysis. Generated evidence cannot be edited manually.', 409);
+    }
     const parsed = payloadSchemas[command.kind].safeParse(command.payload);
     if (!parsed.success)
       throw new IntelligenceError(

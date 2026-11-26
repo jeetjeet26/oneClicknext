@@ -21,6 +21,7 @@ import {
   publishingTargets,
 } from "@/utils/intelligence/components";
 import { InsightsView } from "./InsightsView";
+import { AIRecommendations } from './AIRecommendations';
 const today = () => new Date().toISOString().slice(0, 10);
 const tomorrow = () =>
   new Date(Date.now() + 86400000).toISOString().slice(0, 10);
@@ -168,6 +169,7 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
   }, [load, tab]);
   const patch = (key: string, value: unknown) =>
     setDraft((d) => ({ ...d, [key]: value }));
+  const reloadRecommendations = useCallback(async () => { setView(await load()); }, [load]);
   async function command(
     kind: Kind,
     key: string,
@@ -447,6 +449,9 @@ export function ReviewedRecordsWorkspace({ propertyId, propertyName, mode, initi
         <InsightsView propertyId={propertyId} propertyName={propertyName} />
       ) : tab === "campaigns" ? (
         <PropertyPerformance />
+      ) : tab === 'decisions' ? (
+        view && <AIRecommendations key={propertyId} propertyId={propertyId} propertyName={propertyName}
+          documents={view.documents} canManage={view.canManage} onChanged={reloadRecommendations} />
       ) : (
         view && (
           <>
