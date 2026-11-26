@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { Browserbase } from '@browserbasehq/sdk'
-import { chromium, type Browser } from 'playwright-core'
+import type { Browser } from 'playwright-core'
 import { safePublicFetchWithMetadata } from '@/utils/services/safe-public-fetch'
 import { parseResearchHtml, publicResearchUrl, type ResearchDocument } from './research-source'
 
@@ -10,6 +10,8 @@ export async function renderResearchDocument(entityKey:string,url:string,kind:Re
   const client=new Browserbase({apiKey:process.env.BROWSERBASE_API_KEY,timeout:15000,maxRetries:0})
   let sessionId:string|null=null,browser:Browser|null=null
   try{
+    // Browser capture is optional; its runtime must never prevent saved research reads.
+    const {chromium}=await import('playwright-core')
     const session=await client.sessions.create({projectId:process.env.BROWSERBASE_PROJECT_ID})
     sessionId=session.id
     browser=await chromium.connectOverCDP(session.connectUrl,{timeout:15000})

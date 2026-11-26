@@ -58,6 +58,9 @@ const nextConfig: NextConfig = {
       "./node_modules/playwright-core/**/*",
       "./node_modules/axe-core/**/*",
     ],
+    // Playwright loads browsers.json dynamically, including for remote CDP sessions.
+    "/api/marketvision/research": ["./node_modules/playwright-core/**/*"],
+    "/api/cron/process-market-research": ["./node_modules/playwright-core/**/*"],
   },
   /**
    * Ensure Edge middleware has access to required public env vars in dev/prod.
