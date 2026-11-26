@@ -9,6 +9,7 @@ import { compareResearchProfiles, researchChanges } from './research-analysis'
 import type { ResearchProfile, ResearchResult, ResearchTarget } from './research-contracts'
 import { discoverResearchSources } from './research-discovery'
 import { renderResearchDocument } from './research-renderer'
+import { hasLegacyResearchCitationFailure } from './research-contracts'
 
 interface ResearchContext {model:CommunityModel;targets:ResearchTarget[]}
 type Job = {id:string;property_id:string;context_hash:string;context:ResearchContext;state:string;lease_token:string|null;result:Partial<ResearchResult>;error_message:string|null;created_at:string;updated_at:string}
@@ -77,7 +78,7 @@ export async function processResearchJob(id?:string){
   try{
     const current=await loadResearchContext(job.property_id)
     if(researchHash(current)!==job.context_hash){await finishStep(job,'stopped',job.result,'Community classification, website or competitor scope changed. A fresh research run is required.');return {id:job.id,state:'stopped'}}
-    const profiles=job.result.profiles || [],target=job.context.targets.find(t=>!profiles.some(p=>p.entityKey===t.entityKey))
+    const profiles=job.result.profiles || [],target=job.context.targets.find(t=>{const profile=profiles.find(p=>p.entityKey===t.entityKey);return !profile || hasLegacyResearchCitationFailure(profile)})
     if(target){
       const documents=await readResearchDocuments(job.id,job.property_id)
       const existing=documents.filter(d=>d.entityKey===target.entityKey)
@@ -102,8 +103,9 @@ export async function processResearchJob(id?:string){
       if(!process.env.BROWSERBASE_API_KEY || !process.env.BROWSERBASE_PROJECT_ID)profile.coverageGaps.push('Rendered browser capture is not configured; JavaScript-only inventory may be missing.')
       if(!documents.some(d=>d.entityKey===target.entityKey && d.kind==='reviews' && d.status==='captured'))profile.coverageGaps.push('Property-specific review evidence has not been captured; no reputation conclusion is supported.')
       if(!documents.some(d=>d.entityKey===target.entityKey && d.kind==='ads' && d.status==='captured'))profile.coverageGaps.push('No verified public ad-library capture; competitor ad activity and effectiveness are unknown.')
-      await finishStep(job,'queued',{...job.result,profiles:[...profiles,profile]})
-      return {id:job.id,state:'queued',completedEntities:profiles.length+1,totalEntities:job.context.targets.length}
+      const savedProfiles=[...profiles.filter(p=>p.entityKey!==target.entityKey),profile]
+      await finishStep(job,'queued',{...job.result,profiles:savedProfiles})
+      return {id:job.id,state:'queued',completedEntities:savedProfiles.length,totalEntities:job.context.targets.length}
     }
     const documents=await readResearchDocuments(job.id,job.property_id)
     const comparisons=compareResearchProfiles(profiles,job.context.model)

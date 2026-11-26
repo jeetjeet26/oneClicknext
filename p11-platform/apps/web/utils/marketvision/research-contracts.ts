@@ -70,3 +70,25 @@ export function validateResearchProfile(value:unknown,documents:ResearchDocument
   }
   return profile
 }
+
+/** Keep independently verified items; one bad model quote must not hide valid evidence. */
+export function retainSupportedResearchProfile(value:unknown,documents:ResearchDocument[],expectedKey:string,model:CommunityModel):ResearchProfile {
+  const profile=researchProfile.parse(value)
+  const identity={...profile,facts:[],offerings:[]}
+  validateResearchProfile(identity,documents,expectedKey,model)
+  const facts:ResearchProfile['facts']=[],offerings:ResearchOffering[]=[]
+  for(const fact of profile.facts){
+    try{validateResearchProfile({...identity,facts:[fact]},documents,expectedKey,model);facts.push(fact)}catch{/* Unsupported claims remain withheld. */}
+  }
+  for(const offering of profile.offerings){
+    try{validateResearchProfile({...identity,offerings:[offering]},documents,expectedKey,model);offerings.push(offering)}catch{/* Prices still require the same numeric and transaction checks. */}
+  }
+  const withheld=profile.facts.length+profile.offerings.length-facts.length-offerings.length
+  return {...profile,facts,offerings,coverageGaps:[...profile.coverageGaps,...(withheld?[`${withheld} extracted items were withheld because their citations or values could not be verified.`]:[])]}
+}
+
+/** Recover the former all-or-nothing citation failure once with item validation. */
+export function hasLegacyResearchCitationFailure(profile:ResearchProfile):boolean {
+  return profile.facts.length===0 && profile.offerings.length===0 && profile.coverageGaps.some(gap=>
+    gap==='A research quotation is absent from its retained entity source' || /^Offering field .+ lacks quoted numeric evidence$/.test(gap))
+}
