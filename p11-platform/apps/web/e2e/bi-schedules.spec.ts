@@ -35,7 +35,7 @@ const test = base.extend<{
     } });
 test.setTimeout(120000);
 const modal = (p: Page) => p.getByRole('dialog', { name: 'Scheduled reports' }), list = (p: Page) => modal(p).getByRole('region', { name: 'Report schedules', exact: true }), selected = (p: Page) => modal(p).getByRole('region', { name: 'Selected report schedule' });
-async function login(p: Page, f: Fixture) { await p.goto('/auth/login?redirect=%2Fdashboard%2Fbi'); await p.getByLabel('Email address').fill(f.email); await p.getByLabel('Password', { exact: true }).fill(password); await p.getByRole('button', { name: 'Sign in', exact: true }).click(); await expect(p).toHaveURL(/dashboard\/bi/, { timeout: 30000 }); await p.getByRole('button', { name: 'Schedule', exact: true }).click(); await expect(modal(p).getByRole('button', { name: 'Refresh schedules' })).toBeEnabled({ timeout: 30000 }); }
+async function login(p: Page, f: Fixture) { await p.goto('/auth/login?redirect=%2Fdashboard%2Fbi'); await p.getByLabel('Email address').fill(f.email); await p.getByLabel('Password', { exact: true }).fill(password); await p.getByRole('button', { name: 'Sign in', exact: true }).click(); await expect(p).toHaveURL(/dashboard\/bi/, { timeout: 30000 }); await p.getByRole('button', { name: 'Email reports', exact: true }).click(); await expect(modal(p).getByRole('button', { name: 'Refresh schedules' })).toBeEnabled({ timeout: 30000 }); }
 async function prepare(p: Page, name = 'Weekly client review') { await modal(p).getByLabel('Schedule name').fill(name); await modal(p).getByLabel('Recipient emails').fill('one@fixture.invalid\ntwo@fixture.invalid'); await modal(p).getByLabel('Report period').selectOption('last_7_days'); await modal(p).getByRole('button', { name: 'Preview report', exact: true }).click(); await expect(modal(p).getByRole('button', { name: 'Save paused schedule' })).toBeEnabled(); }
 async function create(p: Page, name = 'Weekly client review') { await prepare(p, name); await modal(p).getByRole('button', { name: 'Save paused schedule' }).click(); await expect(modal(p).getByRole('status')).toContainText('Paused'); await expect(selected(p)).toBeVisible(); }
 const read = (f: Fixture, kind = 'list', id?: string) => '/api/reports/scheduled?' + new URLSearchParams({ propertyId: f.property, kind, ...(id ? { id } : {}) });
@@ -104,7 +104,7 @@ test('lost create response recovers after reopening without storing recipients o
     const raw = await page.evaluate(({ id, property }) => JSON.parse(sessionStorage.getItem(`p11.bi-schedule.v1:${id}:${property}`)!), { id: f.id, property: f.property });
     expect(Object.keys(raw)).toEqual(['id']);
     await modal(page).getByRole('button', { name: 'Close scheduled reports' }).click();
-    await page.getByRole('button', { name: 'Schedule', exact: true }).click();
+    await page.getByRole('button', { name: 'Email reports', exact: true }).click();
     await modal(page).getByRole('button', { name: 'Check request result' }).click();
     await expect(modal(page).getByRole('status')).toContainText('Paused');
     expect((await f.db.from('bi_schedules').select('id', { count: 'exact', head: true }).eq('property_id', f.property)).count).toBe(1);
