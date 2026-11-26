@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
   "framework": "nextjs",
-  "buildCommand": "npm run siteforge:deployment-assets:verify && npm run build",
+  "buildCommand": "test -f runtime-assets/advanced-custom-fields-pro.zip || curl -fsS \"$P11_ACF_ARCHIVE_URL\" -o runtime-assets/advanced-custom-fields-pro.zip; npm run siteforge:deployment-assets:verify && npm run build",
   "installCommand": "npm ci --ignore-scripts",
   "git": {
     "deploymentEnabled": false
