@@ -22,6 +22,12 @@ it('still rejects a changed entity or onboarding transaction',()=>{
  expect(()=>retainSupportedResearchProfile({...base,entityKey:'other'},[source],'subject',model)).toThrow('identity')
  expect(()=>retainSupportedResearchProfile({...base,transaction:'for_sale'},[source],'subject',model)).toThrow('transaction')
 })
+it('retains valid evidence when another item has an invalid category or field type',()=>{
+ const result=retainSupportedResearchProfile({...base,facts:[fact,{...fact,category:'pricing'}],offerings:[offering,{...offering,monthlyRent:'2815'}]},[source],'subject',model)
+ expect(result.facts).toEqual([fact]);expect(result.offerings).toEqual([offering]);expect(result.coverageGaps[0]).toContain('2 extracted items')
+ expect(hasLegacyResearchCitationFailure({...base,coverageGaps:[JSON.stringify([{path:['facts',6,'category']}])]})).toBe(true)
+ expect(hasLegacyResearchCitationFailure({...base,coverageGaps:[JSON.stringify([{path:['transaction']}])]})).toBe(false)
+})
 it('recovers old citation failures while leaving useful profiles and other failures alone',()=>{
  const failed={...base,coverageGaps:['A research quotation is absent from its retained entity source']}
  expect(hasLegacyResearchCitationFailure(failed)).toBe(true)

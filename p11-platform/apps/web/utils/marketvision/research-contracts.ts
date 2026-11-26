@@ -73,14 +73,20 @@ export function validateResearchProfile(value:unknown,documents:ResearchDocument
 
 /** Keep independently verified items; one bad model quote must not hide valid evidence. */
 export function retainSupportedResearchProfile(value:unknown,documents:ResearchDocument[],expectedKey:string,model:CommunityModel):ResearchProfile {
-  const profile=researchProfile.parse(value)
+  const profile=researchProfile.omit({facts:true,offerings:true}).extend({facts:z.array(z.unknown()).max(100),offerings:z.array(z.unknown()).max(100)}).parse(value)
   const identity={...profile,facts:[],offerings:[]}
   validateResearchProfile(identity,documents,expectedKey,model)
   const facts:ResearchProfile['facts']=[],offerings:ResearchOffering[]=[]
-  for(const fact of profile.facts){
+  for(const value of profile.facts){
+    const parsed=researchFact.safeParse(value)
+    if(!parsed.success)continue
+    const fact=parsed.data
     try{validateResearchProfile({...identity,facts:[fact]},documents,expectedKey,model);facts.push(fact)}catch{/* Unsupported claims remain withheld. */}
   }
-  for(const offering of profile.offerings){
+  for(const value of profile.offerings){
+    const parsed=researchOffering.safeParse(value)
+    if(!parsed.success)continue
+    const offering=parsed.data
     try{validateResearchProfile({...identity,offerings:[offering]},documents,expectedKey,model);offerings.push(offering)}catch{/* Prices still require the same numeric and transaction checks. */}
   }
   const withheld=profile.facts.length+profile.offerings.length-facts.length-offerings.length
@@ -90,5 +96,7 @@ export function retainSupportedResearchProfile(value:unknown,documents:ResearchD
 /** Recover the former all-or-nothing citation failure once with item validation. */
 export function hasLegacyResearchCitationFailure(profile:ResearchProfile):boolean {
   return profile.facts.length===0 && profile.offerings.length===0 && profile.coverageGaps.some(gap=>
-    gap==='A research quotation is absent from its retained entity source' || /^Offering field .+ lacks quoted numeric evidence$/.test(gap))
+    gap==='A research quotation is absent from its retained entity source' || /^Offering field .+ lacks quoted numeric evidence$/.test(gap) || (()=>{
+      try{const issues=JSON.parse(gap) as Array<{path?:unknown[]}>;return Array.isArray(issues)&&issues.length>0&&issues.every(issue=>issue.path?.[0]==='facts'||issue.path?.[0]==='offerings')}catch{return false}
+    })())
 }
