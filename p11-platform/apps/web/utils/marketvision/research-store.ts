@@ -110,7 +110,11 @@ export async function processResearchJob(id?:string){
     const documents=await readResearchDocuments(job.id,job.property_id)
     const comparisons=compareResearchProfiles(profiles,job.context.model)
     let insights:ResearchResult['insights']=[],synthesisError:string|null=null
-    try{insights=await synthesizeResearch(profiles,job.context.model,comparisons,documents)}catch(error){synthesisError=error instanceof Error?error.message:'Comparative analysis needs recovery'}
+    try{
+      const synthesis=await synthesizeResearch(profiles,job.context.model,comparisons,documents)
+      insights=synthesis.insights
+      if(synthesis.withheldCount>0)synthesisError=`${synthesis.withheldCount} generated insight${synthesis.withheldCount===1?' was':'s were'} withheld because the structure or source quotations could not be verified.${insights.length===0?' No supported comparative insights were retained.':''} Refresh research to retry comparative analysis.`
+    }catch(error){synthesisError=error instanceof Error?error.message:'Comparative analysis needs recovery'}
     const previous=await db.from('marketvision_research_jobs').select('result').eq('property_id',job.property_id).neq('id',job.id).in('state',['completed','partial']).order('created_at',{ascending:false}).limit(1).maybeSingle()
     if(previous.error)throw new Error('Previous research history could not be loaded')
     const result:ResearchResult={version:1,model:job.context.model,profiles,comparisons,insights,changes:researchChanges(previous.data?.result as unknown as ResearchResult || null,profiles,job.context.model),sourceCount:documents.filter(d=>d.status==='captured').length,failedSources:documents.filter(d=>d.status==='failed').length,generatedAt:new Date().toISOString(),limitations:['Research captures public claims, not independent verification or permission to publish competitor content.','No competitor ad spend, conversion performance, sales velocity or closed-sale prices are inferred.',...(synthesisError?[synthesisError]:[])]}
